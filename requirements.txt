@@ -1,0 +1,7 @@
+flask
+opencv-python
+telethon
+python-dotenv
+werkzeug
+requests
+beautifulsoup4
