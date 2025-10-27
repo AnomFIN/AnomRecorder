@@ -1,0 +1,43 @@
+{
+    "_comment_camera_indices": "List of USB camera device indices. Try [0] for single camera, [0, 1] for two cameras",
+    "camera_indices": [0],
+    
+    "_comment_resolution": "Camera resolution [width, height] in pixels. Common: [640,480], [1280,720], [1920,1080]",
+    "resolution": [640, 480],
+    
+    "_comment_fps": "Frames per second. Higher values = smoother but more CPU usage. Range: 15-60",
+    "fps": 30,
+    
+    "_comment_motion_detection": "Enable automatic motion detection",
+    "motion_detection": true,
+    
+    "_comment_person_detection": "Enable person detection using HOG-SVM (CPU intensive)",
+    "person_detection": true,
+    
+    "_comment_motion_threshold": "Motion sensitivity threshold (0-255). Lower = more sensitive. Typical: 20-30",
+    "motion_threshold": 25,
+    
+    "_comment_motion_min_area": "Minimum pixel area for motion detection. Filters small movements. Typical: 500-2000",
+    "motion_min_area": 500,
+    
+    "_comment_recording_duration": "Seconds to continue recording after motion detected",
+    "recording_duration": 10,
+    
+    "_comment_max_storage_gb": "Maximum storage for recordings in gigabytes. Old recordings auto-deleted when exceeded",
+    "max_storage_gb": 10,
+    
+    "_comment_recordings_path": "Directory path for saving video recordings",
+    "recordings_path": "recordings",
+    
+    "_comment_screenshots_path": "Directory path for saving screenshots",
+    "screenshots_path": "screenshots",
+    
+    "_comment_logo_path": "Path to logo image file (PNG, JPG, BMP). Leave empty to disable. Supports transparency (PNG)",
+    "logo_path": "",
+    
+    "_comment_logo_position": "Logo corner position: 'top-left', 'top-right', 'bottom-left', 'bottom-right'",
+    "logo_position": "top-right",
+    
+    "_comment_logo_scale": "Logo size as fraction of video frame (0.0-1.0). Typical: 0.1-0.2",
+    "logo_scale": 0.15
+}
