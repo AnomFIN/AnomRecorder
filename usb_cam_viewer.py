@@ -11,7 +11,7 @@ import json
 import cv2
 from PIL import Image, ImageTk
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog, simpledialog
 
 
 def list_cameras(max_indices: int = 10, probe_timeout: float = 1.0) -> List[Tuple[str, int]]:
