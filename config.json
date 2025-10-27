@@ -1,0 +1,16 @@
+{
+    "camera_indices": [0],
+    "resolution": [640, 480],
+    "fps": 30,
+    "motion_detection": true,
+    "person_detection": true,
+    "motion_threshold": 25,
+    "motion_min_area": 500,
+    "recording_duration": 10,
+    "max_storage_gb": 10,
+    "recordings_path": "recordings",
+    "screenshots_path": "screenshots",
+    "logo_path": "",
+    "logo_position": "top-right",
+    "logo_scale": 0.15
+}
