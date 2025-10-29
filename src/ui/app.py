@@ -163,6 +163,15 @@ class CameraApp:
 
         ttk.Button(top_bar, text="Päivitä", command=self.refresh_cameras).pack(side=tk.LEFT, padx=(16, 0))
         ttk.Button(top_bar, text="Kuvakaappaus", command=self.save_snapshot).pack(side=tk.LEFT, padx=(8, 0))
+        
+        # Recording indicator
+        indicator_frame = ttk.Frame(top_bar)
+        indicator_frame.pack(side=tk.RIGHT, padx=(8, 8))
+        self.recording_indicator_label = ttk.Label(indicator_frame, text="●", font=("Arial", 16))
+        self.recording_indicator_label.pack(side=tk.LEFT)
+        self.recording_status_var = tk.StringVar(value="Ei tallenna")
+        ttk.Label(indicator_frame, textvariable=self.recording_status_var).pack(side=tk.LEFT, padx=(4, 8))
+        
         ttk.Button(top_bar, text="Sulje", command=self.on_close, style="Accent.TButton").pack(side=tk.RIGHT)
 
         options = ttk.Frame(self.live_tab)
@@ -386,6 +395,11 @@ class CameraApp:
         if not self.root.winfo_exists():
             return
         self._update_playback_if_needed()
+        
+        # Check if any recorder is recording
+        is_recording = any(rec._recording for rec in self.recorders)
+        self._update_recording_indicator(is_recording)
+        
         labels = [self.frame_label1, self.frame_label2]
         for slot in range(2):
             label = labels[slot]
@@ -725,6 +739,15 @@ class CameraApp:
         """Save all settings atomically without disrupting recording."""
         self._save_settings()
         messagebox.showinfo("Tallennettu", "Asetukset tallennettu onnistuneesti.")
+    
+    def _update_recording_indicator(self, is_recording: bool) -> None:
+        """Update the recording indicator to show current recording status."""
+        if is_recording:
+            self.recording_indicator_label.configure(foreground="red")
+            self.recording_status_var.set("Tallentaa")
+        else:
+            self.recording_indicator_label.configure(foreground="green")
+            self.recording_status_var.set("Ei tallenna")
 
     def _load_logo(self, path: Optional[str]) -> None:
         self.logo_bgra = None
