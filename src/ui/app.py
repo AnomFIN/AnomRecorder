@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -105,15 +106,22 @@ class CameraApp:
         self.playback_img: Optional[ImageTk.PhotoImage] = None
         self.playback_last_tick = time.time()
 
+        self._refreshing_cameras = False
+        self._toast_window: Optional[tk.Toplevel] = None
+
         self._load_settings()
         self.motion_thresh_label_var.set(f"{int(float(self.motion_threshold.get()) * 100)} %")
         self._build_layout()
         self._load_logo(self.logo_path)
+        if self.logo_path:
+            self._update_logo_preview(self.logo_path)
         self._update_usage_label()
+        self._load_existing_recordings()
         self.refresh_cameras()
         self.update_layout()
         self.root.after(UPDATE_INTERVAL_MS, self.update_frames)
         self.root.after(2000, self._tick_usage)
+        self.root.after(5000, self._watch_recordings_folder)
 
     # ------------------------------------------------------------------
     # UI construction
@@ -195,11 +203,13 @@ class CameraApp:
         ttk.Label(top, text="Tallenteet").pack(side=tk.LEFT)
         ttk.Button(top, text="Avaa kansio", command=self._open_recordings_folder).pack(side=tk.LEFT, padx=8)
         ttk.Button(top, text="Lisää merkintä", command=self.add_event_note).pack(side=tk.LEFT, padx=8)
+        ttk.Button(top, text="Poista valittu", command=self._delete_selected_recordings).pack(side=tk.LEFT, padx=8)
+        ttk.Button(top, text="Poista kaikki", command=self._delete_all_recordings).pack(side=tk.LEFT, padx=8)
 
         body = ttk.Frame(self.events_tab)
         body.pack(fill=tk.BOTH, expand=True, pady=(12, 0))
         columns = ("nimi", "alku", "kesto", "henkilot", "merkinta")
-        self.events_view = ttk.Treeview(body, columns=columns, show="headings", height=14)
+        self.events_view = ttk.Treeview(body, columns=columns, show="headings", height=14, selectmode="extended")
         self.events_view.heading("nimi", text="Nimi")
         self.events_view.heading("alku", text="Alkuaika")
         self.events_view.heading("kesto", text="Kesto (s)")
@@ -259,12 +269,53 @@ class CameraApp:
         ttk.Scale(motion, from_=0.0, to=0.3, orient=tk.HORIZONTAL, variable=self.motion_threshold, command=lambda _v: self._on_motion_change()).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=8)
         ttk.Label(motion, textvariable=self.motion_thresh_label_var).pack(side=tk.LEFT, padx=(8, 0))
 
+        # Logo preview
+        preview_frame = ttk.Labelframe(outer, text="Logo-esikatselu")
+        preview_frame.pack(fill=tk.X, padx=8, pady=8)
+        self.logo_preview_label = ttk.Label(preview_frame, text="Ei logoa valittu")
+        self.logo_preview_label.pack(pady=12)
+
+        # Save all settings button
+        save_frame = ttk.Frame(outer)
+        save_frame.pack(fill=tk.X, padx=8, pady=8)
+        ttk.Button(save_frame, text="Tallenna asetukset", command=self._save_all_settings, style="Accent.TButton").pack(side=tk.LEFT)
+        ttk.Label(save_frame, text="Tallentaa kaikki asetukset tiedostoon", foreground=PALETTE["muted"]).pack(side=tk.LEFT, padx=(8, 0))
+
         ttk.Label(outer, text="Kamerajärjestelmä by AnomFIN", foreground=PALETTE["muted"]).pack(anchor=tk.E, pady=(12, 0))
 
     # ------------------------------------------------------------------
     # Camera management
     def refresh_cameras(self) -> None:
-        cams = list_cameras()
+        """Refresh camera list in a non-blocking way."""
+        if self._refreshing_cameras:
+            self._show_toast("Kameran päivitys on jo käynnissä", error=False)
+            return
+        
+        self._refreshing_cameras = True
+        self.status_var.set("Päivitetään kameroita...")
+        
+        def _refresh_worker():
+            try:
+                cams = list_cameras()
+                # Schedule UI update on main thread
+                self.root.after(0, lambda: self._update_camera_list(cams, None))
+            except Exception as exc:
+                self.logger.exception("camera-refresh-failed", exc_info=exc)
+                error_msg = f"Kameran päivitys epäonnistui: {str(exc)}"
+                self.root.after(0, lambda: self._update_camera_list([], error_msg))
+        
+        thread = threading.Thread(target=_refresh_worker, daemon=True)
+        thread.start()
+    
+    def _update_camera_list(self, cams: List[Any], error_msg: Optional[str]) -> None:
+        """Update camera list on UI thread (called from refresh_cameras worker)."""
+        self._refreshing_cameras = False
+        
+        if error_msg:
+            self._show_toast(error_msg, error=True)
+            self.status_var.set("Kameran päivitys epäonnistui")
+            return
+        
         self.camera_list = cams
         labels = [name for name, _ in cams]
         self.camera_combo1["values"] = labels
@@ -277,10 +328,12 @@ class CameraApp:
                 self.camera_combo2.current(1)
                 self.on_select_camera(1)
             self.status_var.set("Kamerat: " + ", ".join(labels))
+            self._show_toast(f"Kamerat päivitetty: {len(labels)} löydetty", error=False)
         else:
             self.status_var.set("Kameraa ei löydy. Kytke USB-kamera ja päivitä.")
             self.stop_camera(0)
             self.stop_camera(1)
+            self._show_toast("Kameraa ei löytynyt", error=True)
 
     def update_layout(self) -> None:
         if self.num_cams.get() == 1:
@@ -485,6 +538,109 @@ class CameraApp:
 
     # ------------------------------------------------------------------
     # Recording list
+    def _load_existing_recordings(self) -> None:
+        """Load existing recordings from disk on startup."""
+        try:
+            existing_files = sorted(self.record_dir.glob("*.avi"), key=lambda p: p.stat().st_mtime, reverse=True)
+            for file_path in existing_files:
+                # Skip if already loaded
+                if any(e.path == str(file_path) for e in self.events):
+                    continue
+                
+                try:
+                    stat = file_path.stat()
+                    self.event_counter += 1
+                    
+                    # Try to parse timestamp from filename
+                    start_time = None
+                    try:
+                        parts = file_path.stem.split("_")
+                        if len(parts) >= 3:
+                            date_str = parts[-2]
+                            time_str = parts[-1]
+                            start_time = datetime.strptime(f"{date_str}_{time_str}", "%Y%m%d_%H%M%S")
+                    except Exception:
+                        start_time = datetime.fromtimestamp(stat.st_mtime)
+                    
+                    # Get video duration
+                    duration = None
+                    try:
+                        cap = cv2.VideoCapture(str(file_path))
+                        if cap.isOpened():
+                            fps = cap.get(cv2.CAP_PROP_FPS)
+                            frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+                            if fps > 0:
+                                duration = frame_count / fps
+                            cap.release()
+                    except Exception:
+                        pass
+                    
+                    event = EventItem(
+                        id=self.event_counter,
+                        name=file_path.name,
+                        path=str(file_path),
+                        start=start_time,
+                        end=None,
+                        duration=duration,
+                        persons_max=0,
+                    )
+                    self.events.append(event)
+                except Exception as exc:
+                    self.logger.warning("load-recording-failed", extra={"path": str(file_path)}, exc_info=True)
+            
+            if self.events:
+                self.refresh_events_view()
+                self.logger.info("loaded-recordings", extra={"count": len(self.events)})
+        except Exception as exc:
+            self.logger.exception("load-recordings-failed", exc_info=exc)
+    
+    def _watch_recordings_folder(self) -> None:
+        """Periodically check for new recordings in the folder."""
+        try:
+            existing_paths = {e.path for e in self.events}
+            new_files = []
+            
+            for file_path in self.record_dir.glob("*.avi"):
+                if str(file_path) not in existing_paths:
+                    new_files.append(file_path)
+            
+            if new_files:
+                for file_path in new_files:
+                    try:
+                        stat = file_path.stat()
+                        self.event_counter += 1
+                        
+                        start_time = None
+                        try:
+                            parts = file_path.stem.split("_")
+                            if len(parts) >= 3:
+                                date_str = parts[-2]
+                                time_str = parts[-1]
+                                start_time = datetime.strptime(f"{date_str}_{time_str}", "%Y%m%d_%H%M%S")
+                        except Exception:
+                            start_time = datetime.fromtimestamp(stat.st_mtime)
+                        
+                        event = EventItem(
+                            id=self.event_counter,
+                            name=file_path.name,
+                            path=str(file_path),
+                            start=start_time,
+                            end=None,
+                            duration=None,
+                            persons_max=0,
+                        )
+                        self.events.append(event)
+                    except Exception as exc:
+                        self.logger.warning("watch-add-failed", extra={"path": str(file_path)}, exc_info=True)
+                
+                self.refresh_events_view()
+                self._update_usage_label()
+        except Exception:
+            pass
+        
+        if self.root.winfo_exists():
+            self.root.after(5000, self._watch_recordings_folder)
+    
     def refresh_events_view(self) -> None:
         for item in self.events_view.get_children():
             self.events_view.delete(item)
@@ -507,6 +663,71 @@ class CameraApp:
                 event.note = note.strip()
                 break
         self.refresh_events_view()
+
+    def _delete_selected_recordings(self) -> None:
+        """Delete selected recording(s) with confirmation."""
+        selection = self.events_view.selection()
+        if not selection:
+            messagebox.showinfo("Huom", "Valitse vähintään yksi tallenne poistettavaksi.")
+            return
+        
+        count = len(selection)
+        msg = f"Poistetaanko {count} tallenne{'tta' if count > 1 else ''}?"
+        if not messagebox.askyesno("Vahvista poisto", msg):
+            return
+        
+        deleted_count = 0
+        for path in selection:
+            try:
+                # Try to move to trash/recycle bin (platform-specific)
+                file_path = Path(path)
+                if file_path.exists():
+                    if sys.platform.startswith("win"):
+                        # Windows: use send2trash if available, else delete
+                        try:
+                            import send2trash
+                            send2trash.send2trash(str(file_path))
+                        except ImportError:
+                            file_path.unlink()
+                    else:
+                        # Unix/Mac: use trash-cli or just delete
+                        file_path.unlink()
+                    
+                    # Remove from events list
+                    self.events = [e for e in self.events if e.path != path]
+                    deleted_count += 1
+            except Exception as exc:
+                self.logger.warning("delete-recording-failed", extra={"path": path}, exc_info=True)
+                messagebox.showerror("Virhe", f"Tallenteen poisto epäonnistui:\n{Path(path).name}\n{str(exc)}")
+        
+        if deleted_count > 0:
+            self.refresh_events_view()
+            self._update_usage_label()
+            self._show_toast(f"{deleted_count} tallenne{'tta' if deleted_count > 1 else ''} poistettu", error=False)
+
+    def _delete_all_recordings(self) -> None:
+        """Delete all recordings with confirmation."""
+        if not self.events:
+            messagebox.showinfo("Huom", "Ei tallenteita poistettavaksi.")
+            return
+        
+        if not messagebox.askyesno("Vahvista poisto", f"Poistetaanko KAIKKI {len(self.events)} tallennetta?\n\nTätä toimintoa ei voi kumota!"):
+            return
+        
+        deleted_count = 0
+        for event in list(self.events):
+            try:
+                file_path = Path(event.path)
+                if file_path.exists():
+                    file_path.unlink()
+                deleted_count += 1
+            except Exception as exc:
+                self.logger.warning("delete-recording-failed", extra={"path": event.path}, exc_info=True)
+        
+        self.events.clear()
+        self.refresh_events_view()
+        self._update_usage_label()
+        self._show_toast(f"{deleted_count} tallennetta poistettu", error=False)
 
     # ------------------------------------------------------------------
     # Settings & persistence
@@ -560,6 +781,15 @@ class CameraApp:
         self.refresh_events_view()
         self._update_usage_label()
 
+    def _save_all_settings(self) -> None:
+        """Save all settings atomically without disrupting recording."""
+        try:
+            self._save_settings()
+            self._show_toast("Asetukset tallennettu onnistuneesti", error=False)
+        except Exception as exc:
+            self.logger.exception("settings-save-failed", exc_info=exc)
+            self._show_toast(f"Asetusten tallennus epäonnistui: {str(exc)}", error=True)
+
     def _choose_logo(self) -> None:
         path = filedialog.askopenfilename(title="Valitse logo", filetypes=[("Kuvat", "*.png;*.jpg;*.jpeg;*.bmp"), ("Kaikki", "*.*")])
         if not path:
@@ -567,7 +797,39 @@ class CameraApp:
         self.logo_path = path
         self.logo_path_var.set(path)
         self._load_logo(path)
+        self._update_logo_preview(path)
         self._save_settings()
+
+    def _update_logo_preview(self, path: Optional[str]) -> None:
+        """Update logo preview immediately after selection."""
+        if not path or not hasattr(self, 'logo_preview_label'):
+            return
+        try:
+            img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
+            if img is None:
+                self.logo_preview_label.configure(image="", text="Logoa ei voitu ladata")
+                return
+            
+            # Resize for preview (max 200x100)
+            h, w = img.shape[:2]
+            scale = min(200 / w, 100 / h, 1.0)
+            new_w, new_h = int(w * scale), int(h * scale)
+            resized = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+            
+            # Convert for Tkinter
+            if resized.shape[2] == 4:
+                resized_rgb = cv2.cvtColor(resized, cv2.COLOR_BGRA2RGBA)
+            else:
+                resized_rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+            
+            preview_img = Image.fromarray(resized_rgb)
+            preview_tk = ImageTk.PhotoImage(image=preview_img)
+            
+            self.logo_preview_label.configure(image=preview_tk, text="")
+            self.logo_preview_label.image = preview_tk  # Keep reference
+        except Exception as exc:
+            self.logger.warning("logo-preview-failed", exc_info=True)
+            self.logo_preview_label.configure(image="", text="Esikatselun lataus epäonnistui")
 
     def _load_logo(self, path: Optional[str]) -> None:
         self.logo_bgra = None
@@ -699,6 +961,43 @@ class CameraApp:
             except Exception:
                 pass
         self.root.destroy()
+
+    def _show_toast(self, message: str, error: bool = False) -> None:
+        """Display a temporary toast notification."""
+        if self._toast_window is not None:
+            try:
+                self._toast_window.destroy()
+            except Exception:
+                pass
+        
+        toast = tk.Toplevel(self.root)
+        self._toast_window = toast
+        toast.overrideredirect(True)
+        toast.attributes("-topmost", True)
+        
+        bg_color = "#8B0000" if error else "#2d5016"
+        frame = tk.Frame(toast, bg=bg_color, padx=16, pady=12)
+        frame.pack()
+        
+        label = tk.Label(frame, text=message, bg=bg_color, fg="white", font=("TkDefaultFont", 10))
+        label.pack()
+        
+        # Position at bottom-right
+        toast.update_idletasks()
+        w = toast.winfo_width()
+        h = toast.winfo_height()
+        x = self.root.winfo_x() + self.root.winfo_width() - w - 20
+        y = self.root.winfo_y() + self.root.winfo_height() - h - 60
+        toast.geometry(f"+{x}+{y}")
+        
+        def hide_toast():
+            try:
+                toast.destroy()
+            except Exception:
+                pass
+            self._toast_window = None
+        
+        self.root.after(3000, hide_toast)
 
 
 __all__ = ["CameraApp"]
