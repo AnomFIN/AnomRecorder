@@ -354,7 +354,7 @@ See `MANUAL_TESTING.md` for complete instructions. Quick summary:
 
 ## Known Limitations
 
-1. **Platform**: Auto-reconnect uses DirectShow (Windows). May need `cv2.CAP_ANY` on Linux/Mac.
+1. **Platform**: Auto-reconnect uses DirectShow (Windows via `cv2.CAP_DSHOW`). For Linux/Mac compatibility, consider using `cv2.CAP_ANY` or platform-specific backends (`cv2.CAP_V4L2` for Linux, `cv2.CAP_AVFOUNDATION` for Mac).
 2. **Hotkeys**: Global to app window, may conflict with OS shortcuts.
 3. **Pan Bounds**: Roughly bounded (±500px), not perfectly clamped to frame edges.
 4. **Logo Preview**: Scaled to 100x100, may lose detail for small images.
