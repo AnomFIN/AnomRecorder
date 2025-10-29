@@ -59,6 +59,18 @@ class CameraApp:
         self.root.title("AnomRecorder — AnomFIN")
         apply_dark_theme(root)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+        
+        # Bind keyboard shortcuts
+        self.root.bind("<plus>", lambda e: self._hotkey_zoom_in())
+        self.root.bind("<minus>", lambda e: self._hotkey_zoom_out())
+        self.root.bind("<Left>", lambda e: self._hotkey_pan_left())
+        self.root.bind("<Right>", lambda e: self._hotkey_pan_right())
+        self.root.bind("<Up>", lambda e: self._hotkey_pan_up())
+        self.root.bind("<Down>", lambda e: self._hotkey_pan_down())
+        self.root.bind("r", lambda e: self.refresh_cameras())
+        self.root.bind("R", lambda e: self.refresh_cameras())
+        self.root.bind("<space>", lambda e: self._hotkey_toggle_recording())
+        self.root.bind("<Escape>", lambda e: self._hotkey_reset_zoom())
 
         self.logger = LOGGER
         self.logger.info("app-init")
@@ -164,6 +176,18 @@ class CameraApp:
 
         ttk.Button(top_bar, text="Päivitä", command=self.refresh_cameras).pack(side=tk.LEFT, padx=(16, 0))
         ttk.Button(top_bar, text="Kuvakaappaus", command=self.save_snapshot).pack(side=tk.LEFT, padx=(8, 0))
+        
+        # Recording indicators
+        indicator_frame = ttk.Frame(top_bar)
+        indicator_frame.pack(side=tk.LEFT, padx=(16, 0))
+        ttk.Label(indicator_frame, text="Tallentaa:").pack(side=tk.LEFT)
+        self.recording_indicator1 = tk.Canvas(indicator_frame, width=20, height=20, bg=PALETTE["bg"], highlightthickness=0)
+        self.recording_indicator1.pack(side=tk.LEFT, padx=(4, 2))
+        self.recording_dot1 = self.recording_indicator1.create_oval(4, 4, 16, 16, fill="#2d5016", outline="")
+        self.recording_indicator2 = tk.Canvas(indicator_frame, width=20, height=20, bg=PALETTE["bg"], highlightthickness=0)
+        self.recording_indicator2.pack(side=tk.LEFT, padx=(2, 0))
+        self.recording_dot2 = self.recording_indicator2.create_oval(4, 4, 16, 16, fill="#2d5016", outline="")
+        
         ttk.Button(top_bar, text="Sulje", command=self.on_close, style="Accent.TButton").pack(side=tk.RIGHT)
 
         options = ttk.Frame(self.live_tab)
@@ -191,11 +215,24 @@ class CameraApp:
     def _build_zoom_controls(self, parent: ttk.Frame, slot: int) -> None:
         block = ttk.Frame(parent)
         block.pack(side=tk.LEFT, padx=(0 if slot == 0 else 24, 0))
-        ttk.Label(block, text=f"Zoom {slot + 1}").pack(side=tk.LEFT)
-        ttk.Button(block, text="-", width=3, command=lambda s=slot: self._update_zoom(s, "out")).pack(side=tk.LEFT, padx=4)
-        ttk.Button(block, text="+", width=3, command=lambda s=slot: self._update_zoom(s, "in")).pack(side=tk.LEFT, padx=4)
-        ttk.Button(block, text="Reset", width=6, command=lambda s=slot: self._update_zoom(s, "reset")).pack(side=tk.LEFT, padx=4)
-        ttk.Label(block, textvariable=self.zoom_labels[slot]).pack(side=tk.LEFT, padx=(6, 0))
+        
+        # Zoom controls
+        zoom_frame = ttk.Frame(block)
+        zoom_frame.pack(side=tk.LEFT)
+        ttk.Label(zoom_frame, text=f"Zoom {slot + 1}").pack(side=tk.LEFT)
+        ttk.Button(zoom_frame, text="-", width=3, command=lambda s=slot: self._update_zoom(s, "out")).pack(side=tk.LEFT, padx=4)
+        ttk.Button(zoom_frame, text="+", width=3, command=lambda s=slot: self._update_zoom(s, "in")).pack(side=tk.LEFT, padx=4)
+        ttk.Button(zoom_frame, text="Reset", width=6, command=lambda s=slot: self._update_zoom(s, "reset")).pack(side=tk.LEFT, padx=4)
+        ttk.Label(zoom_frame, textvariable=self.zoom_labels[slot]).pack(side=tk.LEFT, padx=(6, 0))
+        
+        # Pan controls
+        pan_frame = ttk.Frame(block)
+        pan_frame.pack(side=tk.LEFT, padx=(12, 0))
+        ttk.Label(pan_frame, text="Pan").pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(pan_frame, text="←", width=3, command=lambda s=slot: self._pan(s, "left")).pack(side=tk.LEFT, padx=2)
+        ttk.Button(pan_frame, text="↑", width=3, command=lambda s=slot: self._pan(s, "up")).pack(side=tk.LEFT, padx=2)
+        ttk.Button(pan_frame, text="↓", width=3, command=lambda s=slot: self._pan(s, "down")).pack(side=tk.LEFT, padx=2)
+        ttk.Button(pan_frame, text="→", width=3, command=lambda s=slot: self._pan(s, "right")).pack(side=tk.LEFT, padx=2)
 
     def _build_events_tab(self) -> None:
         top = ttk.Frame(self.events_tab)
@@ -280,6 +317,18 @@ class CameraApp:
         save_frame.pack(fill=tk.X, padx=8, pady=8)
         ttk.Button(save_frame, text="Tallenna asetukset", command=self._save_all_settings, style="Accent.TButton").pack(side=tk.LEFT)
         ttk.Label(save_frame, text="Tallentaa kaikki asetukset tiedostoon", foreground=PALETTE["muted"]).pack(side=tk.LEFT, padx=(8, 0))
+
+        # Hotkeys reference
+        hotkeys_frame = ttk.Labelframe(outer, text="Pikanäppäimet")
+        hotkeys_frame.pack(fill=tk.X, padx=8, pady=8)
+        hotkeys_text = (
+            "• +/- : Zoomaa sisään/ulos\n"
+            "• Nuolinäppäimet : Panoroi näkymää\n"
+            "• Esc : Nollaa zoom\n"
+            "• R : Päivitä kamerat\n"
+            "• Välilyönti : Tallennuksen ohjaus (tulossa)"
+        )
+        ttk.Label(hotkeys_frame, text=hotkeys_text, foreground=PALETTE["muted"], justify=tk.LEFT).pack(padx=8, pady=8, anchor=tk.W)
 
         ttk.Label(outer, text="Kamerajärjestelmä by AnomFIN", foreground=PALETTE["muted"]).pack(anchor=tk.E, pady=(12, 0))
 
@@ -402,7 +451,8 @@ class CameraApp:
             self.last_frames_bgr[slot] = frame.copy()
             detections = self._detector.detect(frame) if self.enable_person.get() else []
             annotated = self._annotate(slot, frame, detections)
-            zoomed = crop_zoom(annotated, self.zoom_states[slot].factor)
+            state = self.zoom_states[slot]
+            zoomed = crop_zoom(annotated, state.factor, state.pan_x, state.pan_y)
             display = cv2.resize(zoomed, (960, 540)) if zoomed.shape[1] > 960 else zoomed
             frame_rgb = cv2.cvtColor(display, cv2.COLOR_BGR2RGB)
             img = Image.fromarray(frame_rgb)
@@ -423,8 +473,36 @@ class CameraApp:
                 self._handle_new_event(new_event)
             if finished_event:
                 self._handle_finished_event(finished_event)
+            
+            # Update recording indicator
+            self._update_recording_indicator(slot, self.recorders[slot]._recording)
 
         self.root.after(UPDATE_INTERVAL_MS, self.update_frames)
+    
+    def _update_recording_indicator(self, slot: int, is_recording: bool) -> None:
+        """Update visual recording indicator (red=recording, green=idle)."""
+        color = "#8B0000" if is_recording else "#2d5016"  # Dark red or dark green
+        tooltip = "Tallentaa" if is_recording else "Ei tallenna"
+        
+        if slot == 0:
+            self.recording_indicator1.itemconfig(self.recording_dot1, fill=color)
+            # Update tooltip (basic implementation - could use a tooltip library)
+            try:
+                self.recording_indicator1.unbind("<Enter>")
+                self.recording_indicator1.unbind("<Leave>")
+            except Exception:
+                pass
+            self.recording_indicator1.bind("<Enter>", lambda e: self.status_var.set(f"Kamera 1: {tooltip}"))
+            self.recording_indicator1.bind("<Leave>", lambda e: self.status_var.set(""))
+        elif slot == 1:
+            self.recording_indicator2.itemconfig(self.recording_dot2, fill=color)
+            try:
+                self.recording_indicator2.unbind("<Enter>")
+                self.recording_indicator2.unbind("<Leave>")
+            except Exception:
+                pass
+            self.recording_indicator2.bind("<Enter>", lambda e: self.status_var.set(f"Kamera 2: {tooltip}"))
+            self.recording_indicator2.bind("<Leave>", lambda e: self.status_var.set(""))
 
     def _annotate(self, slot: int, frame_bgr: np.ndarray, detections: List[Any]) -> np.ndarray:
         annotated = frame_bgr.copy()
@@ -922,6 +1000,62 @@ class CameraApp:
         else:
             state.reset()
         self.zoom_labels[slot].set(f"{state.factor:.1f}x")
+    
+    def _pan(self, slot: int, direction: str) -> None:
+        """Pan the view in the specified direction."""
+        state = self.zoom_states[slot]
+        if direction == "left":
+            state.pan_left()
+        elif direction == "right":
+            state.pan_right()
+        elif direction == "up":
+            state.pan_up()
+        elif direction == "down":
+            state.pan_down()
+    
+    def _hotkey_zoom_in(self) -> None:
+        """Zoom in on active camera via hotkey."""
+        slot = 0 if self.indices[0] is not None else (1 if self.indices[1] is not None else None)
+        if slot is not None:
+            self._update_zoom(slot, "in")
+    
+    def _hotkey_zoom_out(self) -> None:
+        """Zoom out on active camera via hotkey."""
+        slot = 0 if self.indices[0] is not None else (1 if self.indices[1] is not None else None)
+        if slot is not None:
+            self._update_zoom(slot, "out")
+    
+    def _hotkey_pan_left(self) -> None:
+        slot = 0 if self.indices[0] is not None else (1 if self.indices[1] is not None else None)
+        if slot is not None:
+            self._pan(slot, "left")
+    
+    def _hotkey_pan_right(self) -> None:
+        slot = 0 if self.indices[0] is not None else (1 if self.indices[1] is not None else None)
+        if slot is not None:
+            self._pan(slot, "right")
+    
+    def _hotkey_pan_up(self) -> None:
+        slot = 0 if self.indices[0] is not None else (1 if self.indices[1] is not None else None)
+        if slot is not None:
+            self._pan(slot, "up")
+    
+    def _hotkey_pan_down(self) -> None:
+        slot = 0 if self.indices[0] is not None else (1 if self.indices[1] is not None else None)
+        if slot is not None:
+            self._pan(slot, "down")
+    
+    def _hotkey_reset_zoom(self) -> None:
+        """Reset zoom on active camera via Esc key."""
+        slot = 0 if self.indices[0] is not None else (1 if self.indices[1] is not None else None)
+        if slot is not None:
+            self._update_zoom(slot, "reset")
+    
+    def _hotkey_toggle_recording(self) -> None:
+        """Toggle recording on/off via Space key (placeholder - recording is automatic)."""
+        # Note: Recording is currently automatic via motion detection
+        # This could be extended to manual recording control if needed
+        pass
 
     def save_snapshot(self) -> None:
         slot = 0 if self.indices[0] is not None else (1 if self.indices[1] is not None else None)
