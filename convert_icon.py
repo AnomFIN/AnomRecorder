@@ -5,6 +5,7 @@ This script converts the logo.png file to .ico format for use as the
 application icon in Windows builds created with PyInstaller.
 """
 
+import sys
 from pathlib import Path
 from PIL import Image
 
@@ -44,4 +45,4 @@ def main():
 
 
 if __name__ == "__main__":
-    exit(main())
+    sys.exit(main())
