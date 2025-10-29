@@ -22,6 +22,10 @@ python -m pip install -r requirements.txt
 python -m pip install pyinstaller
 
 echo.
+echo Converting logo to ICO format...
+python convert_logo_to_ico.py
+
+echo.
 echo Building executable...
 pyinstaller --onefile ^
     --windowed ^
@@ -41,5 +45,6 @@ echo.
 echo ================================================
 echo Build completed successfully!
 echo Executable location: dist\AnomRecorder.exe
+echo Icon: logo.ico
 echo ================================================
 pause

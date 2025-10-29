@@ -92,6 +92,7 @@ class CameraApp:
         self.logo_alpha = tk.DoubleVar(value=0.25)
         self.logo_path: Optional[str] = find_resource("logo.png")
         self.logo_bgra: Optional[np.ndarray] = None
+        self.enable_autoreconnect = tk.BooleanVar(value=True)
 
         self._detector = PersonDetector()
         self._bgsubs = [cv2.createBackgroundSubtractorMOG2(history=300, varThreshold=16, detectShadows=True) for _ in range(2)]
@@ -108,6 +109,8 @@ class CameraApp:
         self.playback_last_tick = time.time()
 
         self._camera_refresh_in_progress = False
+        self._camera_reconnect_attempts = [0, 0]  # Track reconnect attempts per camera
+        self._camera_last_fail_time = [0.0, 0.0]  # Track last failure time per camera
         self.logo_preview_img: Optional[ImageTk.PhotoImage] = None
 
         self._load_settings()
@@ -291,6 +294,11 @@ class CameraApp:
         ttk.Scale(motion, from_=0.0, to=0.3, orient=tk.HORIZONTAL, variable=self.motion_threshold, command=lambda _v: self._on_motion_change()).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=8)
         ttk.Label(motion, textvariable=self.motion_thresh_label_var).pack(side=tk.LEFT, padx=(8, 0))
 
+        # Camera settings
+        camera_settings = ttk.Labelframe(outer, text="Kamera-asetukset")
+        camera_settings.pack(fill=tk.X, padx=8, pady=8)
+        ttk.Checkbutton(camera_settings, text="Automaattinen yhdistäminen kameran katketessa", variable=self.enable_autoreconnect).pack(side=tk.LEFT, padx=8, pady=8)
+
         # Global save button
         save_frame = ttk.Frame(outer)
         save_frame.pack(fill=tk.X, padx=8, pady=(16, 8))
@@ -389,6 +397,36 @@ class CameraApp:
                 self.logger.warning("cap-release-failed", exc_info=True)
         self.caps[slot] = None
         self.indices[slot] = None
+    
+    def _attempt_autoreconnect(self, slot: int) -> None:
+        """Attempt to reconnect to a failed camera with exponential backoff."""
+        now = time.time()
+        
+        # Calculate backoff delay: 2^attempts seconds, capped at 60 seconds
+        backoff_delay = min(60, 2 ** self._camera_reconnect_attempts[slot])
+        
+        # Check if enough time has passed since last failure
+        if now - self._camera_last_fail_time[slot] < backoff_delay:
+            return
+        
+        # Record this attempt
+        self._camera_last_fail_time[slot] = now
+        self._camera_reconnect_attempts[slot] += 1
+        
+        # Attempt to reconnect
+        if self.indices[slot] is not None:
+            self.logger.info(f"autoreconnect-attempt", extra={
+                "slot": slot,
+                "attempt": self._camera_reconnect_attempts[slot],
+                "backoff": backoff_delay
+            })
+            self.start_camera(slot, self.indices[slot])
+            
+            # Reset attempt counter if successful
+            if self.caps[slot] is not None:
+                self._camera_reconnect_attempts[slot] = 0
+                self.status_var.set(f"Kamera {slot + 1} yhdistetty uudelleen")
+                self.logger.info(f"autoreconnect-success", extra={"slot": slot})
 
     # ------------------------------------------------------------------
     # Frame pipeline
@@ -410,9 +448,15 @@ class CameraApp:
                 continue
             cap = self.caps[slot]
             if cap is None:
+                # Try autoreconnect if enabled
+                if self.enable_autoreconnect.get() and self.indices[slot] is not None:
+                    self._attempt_autoreconnect(slot)
                 continue
             ok, frame = cap.read()
             if not ok:
+                # Camera read failed - attempt autoreconnect
+                if self.enable_autoreconnect.get() and self.indices[slot] is not None:
+                    self._attempt_autoreconnect(slot)
                 continue
             self.last_frames_bgr[slot] = frame.copy()
             detections = self._detector.detect(frame) if self.enable_person.get() else []
@@ -661,6 +705,7 @@ class CameraApp:
         self.logo_path = data.get("logo_path") or self.logo_path
         self.logo_alpha.set(float(data.get("logo_alpha", self.logo_alpha.get())))
         self.motion_threshold.set(float(data.get("motion_threshold", self.motion_threshold.get())))
+        self.enable_autoreconnect.set(bool(data.get("enable_autoreconnect", self.enable_autoreconnect.get())))
 
     def _save_settings(self) -> None:
         payload = {
@@ -668,6 +713,7 @@ class CameraApp:
             "logo_path": self.logo_path or "",
             "logo_alpha": float(self.logo_alpha.get()),
             "motion_threshold": float(self.motion_threshold.get()),
+            "enable_autoreconnect": bool(self.enable_autoreconnect.get()),
         }
         try:
             Path(self._settings_path()).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
