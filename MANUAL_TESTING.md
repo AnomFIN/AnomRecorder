@@ -1,293 +1,248 @@
-# Manual Testing Guide for AnomRecorder Features
+# Manual Testing Guide for UI Improvements
 
-This guide covers manual testing for the new features in this PR.
+This guide outlines how to manually verify all the UI improvements in this PR.
 
 ## Prerequisites
-- Install dependencies: `pip install -r requirements.txt`
-- Run the app: `python -m src.index`
-- Have at least one USB camera connected
+- USB camera connected
+- Python environment with all dependencies installed
+- Run: `python -m src.index`
 
-## 1. Non-blocking "Päivitä" Button
+## Test Scenarios
 
-### Test Steps:
-1. Start the app and go to Live view
-2. Select a camera and start viewing (motion/person detection enabled)
-3. Start recording by triggering motion (wave hand in front of camera)
-4. While recording is active (red indicator visible), click "🔄 Päivitä"
-5. Observe the button text changes to "⏳ Päivitetään..." and is disabled
-6. **Expected**: 
-   - UI remains responsive
-   - Recording continues (red indicator stays red)
-   - Camera list refreshes in background
-   - Button returns to "🔄 Päivitä" when complete
+### 1. Recording Indicator
+**Test**: Verify the recording indicator works correctly
 
-### Pass Criteria:
-- ✅ UI doesn't freeze
-- ✅ Recording continues without interruption
-- ✅ Camera list updates successfully
+**Steps**:
+1. Start the application
+2. Select a camera from the dropdown
+3. Observe the top-left corner of the Live tab
+4. Look for the indicator: `● Ei tallenna` in green
 
-## 2. Zoom and Panning
+**Expected Result**:
+- Green indicator shows "● Ei tallenna" when not recording
+- When motion/person is detected, indicator changes to "● Tallentaa" in red
+- Indicator updates automatically
 
-### Test Steps:
+**Visual Check**:
+- Color changes from green to red
+- Text changes appropriately
+- Positioned at top-left, before camera dropdowns
 
-#### Zoom Out (< 1.0x):
-1. Select a camera in Live view
-2. Click "🔍−" button multiple times
-3. **Expected**: 
-   - Zoom level shows 0.75x, 0.5x (minimum)
-   - Video shrinks with black borders
-   - Zoom label updates
+---
 
-#### Zoom In (> 1.0x):
-1. Click "🔍+" button multiple times
-2. **Expected**:
-   - Zoom level shows 1.25x, 1.5x, up to 4.0x
-   - Video crops to center, magnified
-   - Zoom label updates
+### 2. Zoom Out (<1.0x)
+**Test**: Verify zoom out functionality works
 
-#### Panning with Mouse:
-1. Set zoom to 2.0x or higher
-2. Check "🖱️" checkbox to enable panning
-3. Click and drag on the video area
-4. **Expected**:
-   - Cursor changes to "fleur" (cross-arrows)
-   - Video pans as you drag
-   - Panning is bounded (can't pan infinitely)
+**Steps**:
+1. Start camera feed in Live tab
+2. Click the `-` button under "Zoom 1" multiple times
+3. Observe the zoom level label
+4. Watch the video feed
 
-#### Panning with Buttons:
-1. Set zoom to 2.0x
-2. Click the arrow buttons (↑↓←→) next to Pan label
-3. **Expected**: Video pans in the direction of the button
+**Expected Result**:
+- Zoom level goes to 0.75x, 0.5x (stops at 0.5x minimum)
+- Video feed shows black borders around the original frame
+- Label shows current zoom level (e.g., "0.5x")
 
-#### Panning with Keyboard:
-1. Set zoom to 2.0x
-2. Press arrow keys on keyboard
-3. **Expected**: Video pans (if not typing in a text field)
+**Visual Check**:
+- Black borders appear around video when zoomed out
+- Image stays centered
+- Clicking `-` at minimum doesn't break anything
 
-#### Reset:
-1. After zooming and panning, click "Reset"
-2. **Expected**: 
-   - Zoom returns to 1.0x
-   - Pan offset resets to center
-   
-#### Hotkeys:
-1. Press `+` or `=` key → zoom in on camera 1
-2. Press `-` key → zoom out on camera 1
-3. Press `Escape` → reset all zoom/pan
-4. **Expected**: Hotkeys work (unless typing in text field)
+---
 
-### Pass Criteria:
-- ✅ Zoom out to 0.5x works (black borders)
-- ✅ Zoom in to 4.0x works (magnified, cropped)
-- ✅ Mouse panning works when enabled
-- ✅ Button panning works
-- ✅ Keyboard panning works
-- ✅ Panning is bounded
-- ✅ Reset returns to 1.0x with no pan
-- ✅ Hotkeys work
+### 3. Pan Controls
+**Test**: Verify panning works with buttons and keyboard
 
-## 3. Settings Tab: Logo Preview and Save Button
+**Steps**:
+1. Start camera feed in Live tab
+2. Click `+` to zoom in (e.g., to 2.0x)
+3. Click the arrow buttons (←↑↓→) next to zoom controls
+4. Also try pressing arrow keys on keyboard
+5. Observe video movement
 
-### Test Steps:
+**Expected Result**:
+- Clicking arrow buttons pans the view in that direction
+- Keyboard arrows also pan the active camera
+- Panning is smooth and bounded (doesn't go outside frame)
+- Both camera 1 and camera 2 can be panned independently
 
-#### Logo Preview:
+**Visual Check**:
+- Video content moves in the correct direction
+- Can reach all corners of the zoomed frame
+- Panning stops at edges (doesn't show invalid regions)
+
+---
+
+### 4. Logo Preview in Settings
+**Test**: Verify logo preview appears immediately
+
+**Steps**:
+1. Go to Settings tab (Asetukset)
+2. Click "Valitse" under the Logo section
+3. Select an image file (PNG/JPG)
+4. Look for the preview below the file path
+
+**Expected Result**:
+- Logo preview appears immediately after selection
+- Preview shows a scaled-down version of the logo
+- No need to save or reload to see the preview
+- Text changes from "Ei logoa valittu" to showing the image
+
+**Visual Check**:
+- Preview image is visible and recognizable
+- Preview is reasonable size (not too large)
+- If logo can't be loaded, error message is clear
+
+---
+
+### 5. "Tallenna asetukset" Button
+**Test**: Verify explicit save button works
+
+**Steps**:
 1. Go to Settings tab
-2. Click "📁 Valitse" button to select a logo file
-3. Choose a PNG/JPG image
-4. **Expected**:
-   - File path appears in text field
-   - Logo preview shows immediately in "Esikatselu:" area
-   - Preview is scaled to fit ~100x100 pixels
+2. Change logo transparency slider
+3. Notice settings are NOT auto-saved
+4. Click "Tallenna asetukset" button
+5. If recording is active, test the confirmation dialog
 
-#### Settings Save:
-1. Change storage limit to 10 GB
-2. Adjust logo transparency slider
-3. Adjust motion threshold
-4. Check/uncheck hotkeys and autoreconnect options
-5. Click "💾 Tallenna asetukset"
-6. **Expected**:
-   - Success dialog: "Asetukset tallennettu onnistuneesti!"
-   - Settings persist to `settings.json`
-   - No interruption to active recording
+**Expected Result**:
+- Button is visible at bottom of Settings
+- Clicking it saves all settings
+- Success message appears: "Asetukset tallennettu onnistuneesti!"
+- If recording, confirmation dialog asks before saving
+- Recording continues uninterrupted after save
 
-#### Verify Persistence:
-1. Close and restart the app
-2. Go to Settings tab
-3. **Expected**: All settings are restored (storage limit, logo path, etc.)
+**Visual Check**:
+- Button has accent styling (stands out)
+- Success dialog appears
+- No errors in console/logs
 
-### Pass Criteria:
-- ✅ Logo preview shows immediately on file selection
-- ✅ Save button persists all settings
-- ✅ Save doesn't stop recording
-- ✅ Settings persist across app restarts
+---
 
-## 4. Recording Indicator
+### 6. "Päivitä" Button Safety
+**Test**: Verify refresh doesn't break recording
 
-### Test Steps:
-1. Start the app and go to Live view
-2. Select camera(s)
-3. Enable motion detection
-4. Observe the "Tallentaa:" indicators next to camera controls
-5. Trigger motion (wave hand)
-6. **Expected**:
-   - Indicator turns RED when recording starts
-   - Indicator stays RED while recording
-   - Indicator turns GREEN when recording stops (5 sec after motion ends)
+**Steps**:
+1. Start camera feed in Live tab
+2. Wait for or trigger recording (move in front of camera)
+3. Verify recording indicator is red
+4. Click "Päivitä" button while recording
+5. Observe recording continues
 
-### Pass Criteria:
-- ✅ Indicator is GREEN when not recording
-- ✅ Indicator is RED when recording
-- ✅ Indicator updates in real-time
+**Expected Result**:
+- Camera list refreshes
+- Recording does NOT stop
+- Recording indicator stays red
+- Video feed continues without interruption
+- Status message updates to show camera names
 
-## 5. Error Handling and Auto-Reconnect
+**Visual Check**:
+- No visible disruption in video feed
+- Recording indicator doesn't turn green
+- No error dialogs appear
 
-### Test Steps:
+---
 
-#### Camera Disconnect:
-1. Start viewing a camera
-2. Physically disconnect the USB camera
-3. **Expected**:
-   - Error is logged
-   - Status shows reconnection attempts (1/5, 2/5, ...)
-   - App attempts to reconnect with exponential backoff
+### 7. Error Handling Tests
 
-#### Camera Reconnect:
-1. Plug the camera back in during reconnection attempts
-2. **Expected**:
-   - Camera reconnects automatically
-   - Status shows "Kamera X: yhdistetty uudelleen!"
-   - Live view resumes
+#### Test 7a: Disconnect Camera While Running
+**Steps**:
+1. Start camera feed
+2. Physically disconnect USB camera
+3. Observe behavior
 
-#### Disable Auto-Reconnect:
-1. Go to Settings → uncheck "Automaattinen yhdistäminen uudelleen"
-2. Click "💾 Tallenna asetukset"
-3. Disconnect camera
-4. **Expected**: No reconnection attempts
+**Expected Result**:
+- Error message appears (Finnish)
+- Application doesn't crash
+- Status text shows error
+- Can reconnect camera and continue
 
-### Pass Criteria:
-- ✅ Auto-reconnect attempts with backoff
-- ✅ Successful reconnection on camera return
-- ✅ Auto-reconnect can be disabled
-- ✅ Error messages are user-friendly
+#### Test 7b: Invalid Logo File
+**Steps**:
+1. Go to Settings
+2. Try to select a non-image file as logo
+3. Or select a corrupted image
 
-## 6. Hotkeys
+**Expected Result**:
+- Error dialog appears in Finnish
+- Application doesn't crash
+- Can try selecting a different file
 
-### Test Steps:
-1. Go to Live view
-2. Press `R` → **Expected**: Camera refresh triggered
-3. Press `+` → **Expected**: Zoom in on camera 1
-4. Press `-` → **Expected**: Zoom out on camera 1
-5. Press arrow keys → **Expected**: Pan camera 1
-6. Press `Escape` → **Expected**: Reset zoom/pan, disable panning
-7. Click in a text field (Settings tab), press `R` → **Expected**: Types "R", doesn't refresh
-8. Go to Settings, uncheck "Näppäinoikotiet käytössä" → **Expected**: Hotkeys disabled
+#### Test 7c: Snapshot Without Camera
+**Steps**:
+1. Don't start any camera
+2. Click "Kuvakaappaus" button
 
-### Pass Criteria:
-- ✅ R = refresh cameras
-- ✅ +/- = zoom in/out
-- ✅ Arrows = pan
-- ✅ Escape = reset
-- ✅ Hotkeys don't trigger when typing in text fields
-- ✅ Hotkeys can be disabled in Settings
+**Expected Result**:
+- Info dialog: "Ei kuvaa tallennettavana"
+- No error, just informative message
 
-## 7. Persistent Recordings List
+---
 
-### Test Steps:
+### 8. Layout and Polish
+**Test**: Verify UI improvements
 
-#### Generate Recordings:
-1. Start app, trigger some recordings (motion detection)
-2. Wait for recordings to complete
-3. Go to Tallenteet tab → recordings should appear
+**Visual Checks**:
+- Pan buttons (←↑↓→) are visible and aligned in zoom control rows
+- Recording indicator is prominent at top-left
+- Settings tab has proper spacing:
+  - Logo row with file picker
+  - Preview below logo row
+  - Transparency slider in its own row
+  - Motion threshold in separate frame
+  - "Tallenna asetukset" button at bottom
+- All text is in Finnish
+- No layout overflow or clipping
+- Dark theme is preserved
 
-#### Test Persistence:
-1. Close the app completely
-2. Restart the app
-3. Go to Tallenteet tab immediately
-4. **Expected**: Previous recordings are listed (loaded from disk)
+---
 
-#### Verify File Format:
-1. Check that recordings directory contains `.avi` files
-2. Files should be named like `recording_cam0_20231027_143000.avi`
-3. **Expected**: Files are parsed and displayed with timestamp
+## Regression Tests
 
-### Pass Criteria:
-- ✅ Recordings list is populated on app startup
-- ✅ Timestamps are parsed correctly from filenames
-- ✅ All previous recordings are shown
+### Test R1: Normal Recording Flow
+**Steps**:
+1. Select camera
+2. Enable motion/person detection
+3. Trigger detection
+4. Verify recording starts and stops normally
+5. Check recordings in Tallenteet tab
 
-## 8. UI Polish
+**Expected Result**: Everything works as before
 
-### Visual Inspection:
-1. Check all tabs (Live, Tallenteet, Asetukset)
-2. **Expected**:
-   - Icons visible: 🔄📷🔍💾🖱️↑↓←→
-   - Finnish labels throughout
-   - Proper spacing and alignment
-   - Buttons are clearly labeled
-   - Recording indicators visible and prominent
+### Test R2: Playback
+**Steps**:
+1. Record some video
+2. Go to Tallenteet tab
+3. Select a recording
+4. Click Play
+5. Try different speeds (0.5x, 1x, 2x)
 
-### Pass Criteria:
-- ✅ UI is polished and professional
-- ✅ All text is in Finnish
-- ✅ Icons enhance usability
-- ✅ Layout is clean and organized
+**Expected Result**: Playback works normally
 
-## Summary Checklist
+### Test R3: Settings Persistence
+**Steps**:
+1. Change settings and save
+2. Close application
+3. Restart application
+4. Verify settings are loaded
 
-After completing all tests above, verify:
+**Expected Result**: Settings persist across restarts
 
-- [ ] Päivitä button doesn't freeze UI or stop recording
-- [ ] Zoom works for factors <1.0 and >1.0
-- [ ] Pan works with mouse, buttons, and keyboard
-- [ ] Logo preview shows immediately on selection
-- [ ] Settings save button works without stopping recording
-- [ ] Recording indicator shows red/green correctly
-- [ ] Auto-reconnect works when camera disconnects
-- [ ] Hotkeys work and can be disabled
-- [ ] Recordings list persists across app restarts
-- [ ] All tests pass: `pytest tests/ -v`
+---
 
-## Test Results
+## Success Criteria
+- All new features work as described
+- No regressions in existing features
+- No error dialogs during normal operation
+- Application remains responsive
+- All text is in Finnish
+- UI is polished and professional
 
-Date: ___________
-Tester: ___________
-
-| Feature | Pass | Fail | Notes |
-|---------|------|------|-------|
-| Non-blocking Päivitä | ☐ | ☐ | |
-| Zoom <1.0 | ☐ | ☐ | |
-| Zoom >1.0 | ☐ | ☐ | |
-| Mouse pan | ☐ | ☐ | |
-| Button pan | ☐ | ☐ | |
-| Keyboard pan | ☐ | ☐ | |
-| Logo preview | ☐ | ☐ | |
-| Settings save | ☐ | ☐ | |
-| Recording indicator | ☐ | ☐ | |
-| Auto-reconnect | ☐ | ☐ | |
-| Hotkeys | ☐ | ☐ | |
-| Recordings persistence | ☐ | ☐ | |
-
-## Known Limitations
-
-1. Hotkeys are global to the app window (may conflict with OS hotkeys)
-2. Auto-reconnect has a maximum of 5 attempts
-3. Pan offset is roughly bounded (±500 pixels)
-4. Logo preview is scaled to ~100x100 (may lose quality for small icons)
-5. Camera refresh uses DirectShow (Windows) - may need CAP_ANY on other platforms
-
-## Troubleshooting
-
-**Q: Päivitä button seems to hang**
-A: Check if camera is physically connected and responding. Thread may be waiting for camera probe timeout.
-
-**Q: Zoom/pan not working**
-A: Ensure a camera is selected and displaying video. Zoom/pan only affects active video streams.
-
-**Q: Hotkeys not working**
-A: Check Settings → "Näppäinoikotiet käytössä" is checked. Don't type in text fields.
-
-**Q: Recordings not loading on startup**
-A: Check `recordings/` directory exists and contains `recording_*.avi` files. Check file permissions.
-
-**Q: Auto-reconnect failing**
-A: Camera may be in use by another app, or driver may be stuck. Try manual Päivitä or restart app.
+## Notes for Testers
+- Test with both 1 and 2 cameras if possible
+- Test with different zoom levels
+- Test panning at different zoom levels
+- Try switching tabs while recording
+- Test all error scenarios safely
+- Check logs for any warnings/errors
