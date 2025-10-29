@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import sys
+import threading
 import time
 import threading
 from dataclasses import dataclass
@@ -70,9 +71,14 @@ class CameraApp:
         self.enable_person = tk.BooleanVar(value=True)
         self.is_recording = tk.BooleanVar(value=False)  # Track recording state
 
-        self.zoom_states = [ZoomState(), ZoomState()]
+        self.zoom_states = [ZoomState(min_factor=0.5), ZoomState(min_factor=0.5)]
         self.zoom_labels = [tk.StringVar(value="1.0x"), tk.StringVar(value="1.0x")]
+        self.pan_offsets = [[0, 0], [0, 0]]  # [x, y] offset for each camera
+        self.panning_enabled = [tk.BooleanVar(value=False), tk.BooleanVar(value=False)]
 
+        self.recording_indicators = [tk.StringVar(value="●"), tk.StringVar(value="●")]
+        self.is_recording = [False, False]
+        
         self.caps: List[Optional[cv2.VideoCapture]] = [None, None]
         self.indices: List[Optional[int]] = [None, None]
         self.frame_imgs: List[Optional[ImageTk.PhotoImage]] = [None, None]
@@ -208,8 +214,13 @@ class CameraApp:
 
         self.frame_label1 = ttk.Label(self.video_area)
         self.frame_label1.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
+        self.frame_label1.bind("<Button-1>", lambda e: self._on_video_click(0, e))
+        self.frame_label1.bind("<B1-Motion>", lambda e: self._on_video_drag(0, e))
+        
         self.frame_label2 = ttk.Label(self.video_area)
         self.frame_label2.grid(row=0, column=1, sticky="nsew", padx=6, pady=6)
+        self.frame_label2.bind("<Button-1>", lambda e: self._on_video_click(1, e))
+        self.frame_label2.bind("<B1-Motion>", lambda e: self._on_video_drag(1, e))
 
         # Bind arrow keys for panning
         self.root.bind("<Left>", lambda e: self._pan_active_camera(-0.05, 0))
@@ -223,9 +234,9 @@ class CameraApp:
         block = ttk.Frame(parent)
         block.pack(side=tk.LEFT, padx=(0 if slot == 0 else 24, 0))
         ttk.Label(block, text=f"Zoom {slot + 1}").pack(side=tk.LEFT)
-        ttk.Button(block, text="-", width=3, command=lambda s=slot: self._update_zoom(s, "out")).pack(side=tk.LEFT, padx=4)
-        ttk.Button(block, text="+", width=3, command=lambda s=slot: self._update_zoom(s, "in")).pack(side=tk.LEFT, padx=4)
-        ttk.Button(block, text="Reset", width=6, command=lambda s=slot: self._update_zoom(s, "reset")).pack(side=tk.LEFT, padx=4)
+        ttk.Button(block, text="🔍−", width=4, command=lambda s=slot: self._update_zoom(s, "out")).pack(side=tk.LEFT, padx=2)
+        ttk.Button(block, text="🔍+", width=4, command=lambda s=slot: self._update_zoom(s, "in")).pack(side=tk.LEFT, padx=2)
+        ttk.Button(block, text="Reset", width=6, command=lambda s=slot: self._update_zoom(s, "reset")).pack(side=tk.LEFT, padx=2)
         ttk.Label(block, textvariable=self.zoom_labels[slot]).pack(side=tk.LEFT, padx=(6, 0))
         # Pan controls
         ttk.Label(block, text="Pan:").pack(side=tk.LEFT, padx=(12, 4))
@@ -910,6 +921,7 @@ class CameraApp:
             state.zoom_out()
         else:
             state.reset()
+            self.pan_offsets[slot] = [0, 0]  # Reset pan on zoom reset
         self.zoom_labels[slot].set(f"{state.factor:.1f}x")
     
     def _pan(self, slot: int, dx: float, dy: float) -> None:
