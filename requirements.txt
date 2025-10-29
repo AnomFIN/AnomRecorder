@@ -7,3 +7,4 @@ requests
 beautifulsoup4
 numpy
 Pillow
+send2trash

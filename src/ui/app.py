@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -23,6 +24,7 @@ import numpy as np
 import tkinter as tk
 from PIL import Image, ImageTk
 from tkinter import filedialog, messagebox, simpledialog, ttk
+from send2trash import send2trash
 
 from ..core.detection import PersonDetector
 from ..core.humanize import format_bytes, format_percentage, format_timestamp
@@ -105,13 +107,18 @@ class CameraApp:
         self.playback_img: Optional[ImageTk.PhotoImage] = None
         self.playback_last_tick = time.time()
 
+        self._camera_refresh_in_progress = False
+        self.logo_preview_img: Optional[ImageTk.PhotoImage] = None
+
         self._load_settings()
         self.motion_thresh_label_var.set(f"{int(float(self.motion_threshold.get()) * 100)} %")
         self._build_layout()
         self._load_logo(self.logo_path)
+        self._load_existing_recordings()
         self._update_usage_label()
         self.refresh_cameras()
         self.update_layout()
+        self._update_logo_preview()
         self.root.after(UPDATE_INTERVAL_MS, self.update_frames)
         self.root.after(2000, self._tick_usage)
 
@@ -195,11 +202,13 @@ class CameraApp:
         ttk.Label(top, text="Tallenteet").pack(side=tk.LEFT)
         ttk.Button(top, text="Avaa kansio", command=self._open_recordings_folder).pack(side=tk.LEFT, padx=8)
         ttk.Button(top, text="Lisää merkintä", command=self.add_event_note).pack(side=tk.LEFT, padx=8)
+        ttk.Button(top, text="Poista valittu", command=self._delete_selected_recording).pack(side=tk.LEFT, padx=8)
+        ttk.Button(top, text="Poista useita", command=self._delete_multiple_recordings).pack(side=tk.LEFT, padx=8)
 
         body = ttk.Frame(self.events_tab)
         body.pack(fill=tk.BOTH, expand=True, pady=(12, 0))
         columns = ("nimi", "alku", "kesto", "henkilot", "merkinta")
-        self.events_view = ttk.Treeview(body, columns=columns, show="headings", height=14)
+        self.events_view = ttk.Treeview(body, columns=columns, show="headings", height=14, selectmode="extended")
         self.events_view.heading("nimi", text="Nimi")
         self.events_view.heading("alku", text="Alkuaika")
         self.events_view.heading("kesto", text="Kesto (s)")
@@ -246,12 +255,25 @@ class CameraApp:
 
         branding = ttk.Labelframe(outer, text="Brändäys")
         branding.pack(fill=tk.X, padx=8, pady=8)
+        
+        logo_row = ttk.Frame(branding)
+        logo_row.pack(fill=tk.X, pady=4)
         self.logo_path_var = tk.StringVar(value=self.logo_path or "")
-        ttk.Label(branding, text="Logo").pack(side=tk.LEFT)
-        ttk.Entry(branding, textvariable=self.logo_path_var, width=40).pack(side=tk.LEFT, padx=8)
-        ttk.Button(branding, text="Valitse", command=self._choose_logo).pack(side=tk.LEFT)
-        ttk.Label(branding, text="Läpinäkyvyys").pack(side=tk.LEFT, padx=(16, 4))
-        ttk.Scale(branding, from_=0.0, to=1.0, orient=tk.HORIZONTAL, variable=self.logo_alpha, command=lambda _v: self._save_settings()).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=8)
+        ttk.Label(logo_row, text="Logo").pack(side=tk.LEFT)
+        ttk.Entry(logo_row, textvariable=self.logo_path_var, width=40).pack(side=tk.LEFT, padx=8)
+        ttk.Button(logo_row, text="Valitse", command=self._choose_logo).pack(side=tk.LEFT)
+        
+        # Logo preview
+        preview_frame = ttk.Frame(branding)
+        preview_frame.pack(fill=tk.X, pady=4)
+        ttk.Label(preview_frame, text="Esikatselu:").pack(side=tk.LEFT)
+        self.logo_preview_label = ttk.Label(preview_frame)
+        self.logo_preview_label.pack(side=tk.LEFT, padx=8)
+        
+        alpha_row = ttk.Frame(branding)
+        alpha_row.pack(fill=tk.X, pady=4)
+        ttk.Label(alpha_row, text="Läpinäkyvyys").pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Scale(alpha_row, from_=0.0, to=1.0, orient=tk.HORIZONTAL, variable=self.logo_alpha, command=lambda _v: self._update_logo_preview()).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=8)
 
         motion = ttk.Labelframe(outer, text="Liikekynnys")
         motion.pack(fill=tk.X, padx=8, pady=8)
@@ -259,28 +281,59 @@ class CameraApp:
         ttk.Scale(motion, from_=0.0, to=0.3, orient=tk.HORIZONTAL, variable=self.motion_threshold, command=lambda _v: self._on_motion_change()).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=8)
         ttk.Label(motion, textvariable=self.motion_thresh_label_var).pack(side=tk.LEFT, padx=(8, 0))
 
-        ttk.Label(outer, text="Kamerajärjestelmä by AnomFIN", foreground=PALETTE["muted"]).pack(anchor=tk.E, pady=(12, 0))
+        # Global save button
+        save_frame = ttk.Frame(outer)
+        save_frame.pack(fill=tk.X, padx=8, pady=(16, 8))
+        ttk.Button(save_frame, text="Tallenna asetukset", command=self._save_all_settings, style="Accent.TButton").pack(side=tk.LEFT)
+        ttk.Label(save_frame, text="Kamerajärjestelmä by AnomFIN", foreground=PALETTE["muted"]).pack(side=tk.RIGHT)
 
     # ------------------------------------------------------------------
     # Camera management
     def refresh_cameras(self) -> None:
-        cams = list_cameras()
-        self.camera_list = cams
-        labels = [name for name, _ in cams]
-        self.camera_combo1["values"] = labels
-        self.camera_combo2["values"] = labels
-        if labels:
-            if self.camera_combo1.current() == -1:
-                self.camera_combo1.current(0)
-                self.on_select_camera(0)
-            if self.num_cams.get() >= 2 and self.camera_combo2.current() == -1 and len(labels) > 1:
-                self.camera_combo2.current(1)
-                self.on_select_camera(1)
-            self.status_var.set("Kamerat: " + ", ".join(labels))
-        else:
-            self.status_var.set("Kameraa ei löydy. Kytke USB-kamera ja päivitä.")
-            self.stop_camera(0)
-            self.stop_camera(1)
+        """Refresh camera list asynchronously to avoid blocking the UI."""
+        if self._camera_refresh_in_progress:
+            self.status_var.set("Kameran päivitys jo käynnissä...")
+            return
+        
+        self._camera_refresh_in_progress = True
+        self.status_var.set("Päivitetään kameralistaa...")
+        
+        def _refresh_thread():
+            try:
+                cams = list_cameras()
+                # Schedule UI update on main thread
+                self.root.after(0, lambda: self._update_camera_list(cams))
+            except Exception as exc:
+                self.logger.warning("camera-refresh-failed", exc_info=exc)
+                self.root.after(0, lambda: self._camera_refresh_failed())
+        
+        thread = threading.Thread(target=_refresh_thread, daemon=True)
+        thread.start()
+    
+    def _update_camera_list(self, cams: List[Any]) -> None:
+        """Update camera list on main thread (called from refresh thread)."""
+        try:
+            self.camera_list = cams
+            labels = [name for name, _ in cams]
+            self.camera_combo1["values"] = labels
+            self.camera_combo2["values"] = labels
+            if labels:
+                if self.camera_combo1.current() == -1:
+                    self.camera_combo1.current(0)
+                    self.on_select_camera(0)
+                if self.num_cams.get() >= 2 and self.camera_combo2.current() == -1 and len(labels) > 1:
+                    self.camera_combo2.current(1)
+                    self.on_select_camera(1)
+                self.status_var.set("Kamerat: " + ", ".join(labels))
+            else:
+                self.status_var.set("Kameraa ei löydy. Kytke USB-kamera ja päivitä.")
+        finally:
+            self._camera_refresh_in_progress = False
+    
+    def _camera_refresh_failed(self) -> None:
+        """Handle camera refresh failure."""
+        self.status_var.set("Kameran päivitys epäonnistui")
+        self._camera_refresh_in_progress = False
 
     def update_layout(self) -> None:
         if self.num_cams.get() == 1:
@@ -485,6 +538,27 @@ class CameraApp:
 
     # ------------------------------------------------------------------
     # Recording list
+    def _load_existing_recordings(self) -> None:
+        """Load existing recordings from the recordings directory on startup."""
+        try:
+            for file in sorted(self.record_dir.glob("*.avi")):
+                if file.is_file():
+                    self.event_counter += 1
+                    stat = file.stat()
+                    event = EventItem(
+                        id=self.event_counter,
+                        name=file.name,
+                        path=str(file),
+                        start=datetime.fromtimestamp(stat.st_mtime),
+                        end=None,
+                        duration=None,
+                        persons_max=0,
+                    )
+                    self.events.append(event)
+            self.refresh_events_view()
+        except Exception as exc:
+            self.logger.warning("load-existing-recordings-failed", exc_info=exc)
+    
     def refresh_events_view(self) -> None:
         for item in self.events_view.get_children():
             self.events_view.delete(item)
@@ -507,6 +581,56 @@ class CameraApp:
                 event.note = note.strip()
                 break
         self.refresh_events_view()
+    
+    def _delete_selected_recording(self) -> None:
+        """Delete a single selected recording."""
+        selection = self.events_view.selection()
+        if not selection:
+            messagebox.showinfo("Huom", "Valitse ensin tallenne.")
+            return
+        if not messagebox.askyesno("Vahvista", "Poistetaanko valittu tallenne?"):
+            return
+        self._delete_recordings([selection[0]])
+    
+    def _delete_multiple_recordings(self) -> None:
+        """Delete multiple selected recordings."""
+        selection = self.events_view.selection()
+        if not selection:
+            messagebox.showinfo("Huom", "Valitse poistettavat tallenteet.")
+            return
+        if not messagebox.askyesno("Vahvista", f"Poistetaanko {len(selection)} tallennetta?"):
+            return
+        self._delete_recordings(list(selection))
+    
+    def _delete_recordings(self, paths: List[str]) -> None:
+        """Delete recordings with trash support (roskakori)."""
+        failed = []
+        for path in paths:
+            try:
+                # Try to send to trash first (preferred method)
+                send2trash(path)
+                self.logger.info("recording-deleted-to-trash", extra={"path": path})
+            except Exception as exc:
+                self.logger.warning("send2trash-failed", extra={"path": path}, exc_info=exc)
+                # Fallback: ask for permanent deletion
+                if messagebox.askyesno("Roskakorin käyttö epäonnistui", 
+                                       f"Tiedostoa ei voitu siirtää roskakoriin:\n{Path(path).name}\n\nPoistetaanko pysyvästi?"):
+                    try:
+                        Path(path).unlink()
+                        self.logger.info("recording-deleted-permanently", extra={"path": path})
+                    except Exception as perm_exc:
+                        self.logger.warning("permanent-delete-failed", extra={"path": path}, exc_info=perm_exc)
+                        failed.append(Path(path).name)
+                else:
+                    failed.append(Path(path).name)
+        
+        # Remove from events list
+        self.events = [e for e in self.events if e.path not in paths]
+        self.refresh_events_view()
+        self._update_usage_label()
+        
+        if failed:
+            messagebox.showwarning("Virhe", f"Seuraavia tiedostoja ei voitu poistaa:\n" + "\n".join(failed))
 
     # ------------------------------------------------------------------
     # Settings & persistence
@@ -550,15 +674,9 @@ class CameraApp:
     def _clear_recordings(self) -> None:
         if not messagebox.askyesno("Vahvista", "Poistetaanko kaikki tallenteet?"):
             return
-        for file in self.record_dir.glob("*"):
-            if file.is_file():
-                try:
-                    file.unlink()
-                except Exception:
-                    self.logger.warning("delete-failed", extra={"path": str(file)}, exc_info=True)
-        self.events.clear()
-        self.refresh_events_view()
-        self._update_usage_label()
+        paths = [str(file) for file in self.record_dir.glob("*") if file.is_file()]
+        if paths:
+            self._delete_recordings(paths)
 
     def _choose_logo(self) -> None:
         path = filedialog.askopenfilename(title="Valitse logo", filetypes=[("Kuvat", "*.png;*.jpg;*.jpeg;*.bmp"), ("Kaikki", "*.*")])
@@ -567,7 +685,46 @@ class CameraApp:
         self.logo_path = path
         self.logo_path_var.set(path)
         self._load_logo(path)
+        self._update_logo_preview()
+    
+    def _update_logo_preview(self) -> None:
+        """Update the logo preview in settings."""
+        if not self.logo_bgra is None:
+            # Create a preview of the logo with current alpha
+            preview_size = (100, 100)
+            h, w = self.logo_bgra.shape[:2]
+            scale = min(preview_size[0] / w, preview_size[1] / h, 1.0)
+            new_w = max(1, int(w * scale))
+            new_h = max(1, int(h * scale))
+            resized = cv2.resize(self.logo_bgra, (new_w, new_h), interpolation=cv2.INTER_AREA)
+            
+            # Create white background
+            bg = np.ones((preview_size[1], preview_size[0], 3), dtype=np.uint8) * 255
+            
+            # Position logo in center
+            y_offset = (preview_size[1] - new_h) // 2
+            x_offset = (preview_size[0] - new_w) // 2
+            
+            # Apply alpha blending
+            alpha = (resized[..., 3].astype("float32") / 255.0) * float(self.logo_alpha.get())
+            alpha_bg = 1.0 - alpha
+            roi = bg[y_offset:y_offset + new_h, x_offset:x_offset + new_w]
+            for c in range(3):
+                roi[..., c] = (alpha * resized[..., c] + alpha_bg * roi[..., c]).astype("uint8")
+            bg[y_offset:y_offset + new_h, x_offset:x_offset + new_w] = roi
+            
+            # Convert to PhotoImage
+            img = Image.fromarray(cv2.cvtColor(bg, cv2.COLOR_BGR2RGB))
+            imgtk = ImageTk.PhotoImage(image=img)
+            self.logo_preview_img = imgtk  # Keep reference
+            self.logo_preview_label.configure(image=imgtk)
+        else:
+            self.logo_preview_label.configure(image="")
+    
+    def _save_all_settings(self) -> None:
+        """Save all settings atomically without disrupting recording."""
         self._save_settings()
+        messagebox.showinfo("Tallennettu", "Asetukset tallennettu onnistuneesti.")
 
     def _load_logo(self, path: Optional[str]) -> None:
         self.logo_bgra = None
@@ -606,7 +763,6 @@ class CameraApp:
 
     def _on_motion_change(self) -> None:
         self.motion_thresh_label_var.set(f"{int(float(self.motion_threshold.get()) * 100)} %")
-        self._save_settings()
 
     def _dir_size_bytes(self, path: Path) -> int:
         total = 0
