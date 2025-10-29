@@ -429,9 +429,9 @@ class CameraApp:
                 if finished_event:
                     self._handle_finished_event(finished_event)
             except Exception as e:
-                self.logger.error(f"frame-update-failed-slot-{slot}", exc_info=True)
-                # Don't show error dialog in loop, just log it
-                # Optionally update status for user visibility
+                self.logger.error("frame-update-failed", extra={"slot": slot}, exc_info=True)
+                # Don't show error dialog in update loop to avoid freezing UI or spamming user with multiple dialogs.
+                # Instead, just log the error and update status text for user visibility.
                 if slot == 0 or (slot == 1 and self.num_cams.get() == 2):
                     self.status_var.set(f"Kamera {slot + 1}: virhe kuvan käsittelyssä")
 
@@ -818,7 +818,7 @@ class CameraApp:
             path = self.record_dir / f"snapshot_cam{slot}_{ts}.png"
             success = cv2.imwrite(str(path), self.last_frames_bgr[slot])
             if not success:
-                raise RuntimeError("Kuvan kirjoitus epäonnistui")
+                raise RuntimeError(f"Kuvan kirjoitus epäonnistui: {path}")
             messagebox.showinfo("Tallennettu", f"Kuvakaappaus tallennettu:\n{path}")
         except Exception as e:
             self.logger.error("snapshot-failed", exc_info=True)
