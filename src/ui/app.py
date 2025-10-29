@@ -358,16 +358,21 @@ class CameraApp:
         if self.indices[slot] == index and self.caps[slot] is not None:
             return
         self.stop_camera(slot)
-        cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-        if not cap.isOpened():
-            self.status_var.set(f"Kamera {slot + 1}: avaaminen epäonnistui")
-            cap.release()
-            return
-        self.caps[slot] = cap
-        self.indices[slot] = index
-        self.status_var.set("Live-katselu käynnissä")
+        try:
+            cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+            if not cap.isOpened():
+                self.status_var.set(f"Kamera {slot + 1}: avaaminen epäonnistui")
+                cap.release()
+                messagebox.showwarning("Kamera", f"Kamera {slot + 1} ei vastaa. Tarkista USB-liitäntä.")
+                return
+            self.caps[slot] = cap
+            self.indices[slot] = index
+            self.status_var.set("Live-katselu käynnissä")
+        except Exception as e:
+            self.logger.error("start-camera-failed", exc_info=True)
+            messagebox.showerror("Virhe", f"Kameran {slot + 1} käynnistys epäonnistui: {str(e)}")
 
     def stop_camera(self, slot: int) -> None:
         if self.caps[slot] is not None:
@@ -386,42 +391,49 @@ class CameraApp:
         self._update_playback_if_needed()
         labels = [self.frame_label1, self.frame_label2]
         for slot in range(2):
-            label = labels[slot]
-            if slot == 1 and self.num_cams.get() == 1:
-                label.configure(image="")
-                self.frame_imgs[slot] = None
-                continue
-            cap = self.caps[slot]
-            if cap is None:
-                continue
-            ok, frame = cap.read()
-            if not ok:
-                continue
-            self.last_frames_bgr[slot] = frame.copy()
-            detections = self._detector.detect(frame) if self.enable_person.get() else []
-            annotated = self._annotate(slot, frame, detections)
-            zoomed = crop_zoom(annotated, self.zoom_states[slot].factor, 
-                              self.zoom_states[slot].pan_x, self.zoom_states[slot].pan_y)
-            display = cv2.resize(zoomed, (960, 540)) if zoomed.shape[1] > 960 else zoomed
-            frame_rgb = cv2.cvtColor(display, cv2.COLOR_BGR2RGB)
-            img = Image.fromarray(frame_rgb)
-            imgtk = ImageTk.PhotoImage(image=img)
-            self.frame_imgs[slot] = imgtk
-            label.configure(image=imgtk)
+            try:
+                label = labels[slot]
+                if slot == 1 and self.num_cams.get() == 1:
+                    label.configure(image="")
+                    self.frame_imgs[slot] = None
+                    continue
+                cap = self.caps[slot]
+                if cap is None:
+                    continue
+                ok, frame = cap.read()
+                if not ok:
+                    continue
+                self.last_frames_bgr[slot] = frame.copy()
+                detections = self._detector.detect(frame) if self.enable_person.get() else []
+                annotated = self._annotate(slot, frame, detections)
+                zoomed = crop_zoom(annotated, self.zoom_states[slot].factor, 
+                                  self.zoom_states[slot].pan_x, self.zoom_states[slot].pan_y)
+                display = cv2.resize(zoomed, (960, 540)) if zoomed.shape[1] > 960 else zoomed
+                frame_rgb = cv2.cvtColor(display, cv2.COLOR_BGR2RGB)
+                img = Image.fromarray(frame_rgb)
+                imgtk = ImageTk.PhotoImage(image=img)
+                self.frame_imgs[slot] = imgtk
+                label.configure(image=imgtk)
 
-            motion_trigger = False
-            if self.enable_motion.get():
-                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                fg = self._bgsubs[slot].apply(gray)
-                lvl = float((fg > 0).sum()) / float(fg.size)
-                motion_trigger = lvl > float(self.motion_threshold.get())
-            person_count = len(detections)
+                motion_trigger = False
+                if self.enable_motion.get():
+                    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                    fg = self._bgsubs[slot].apply(gray)
+                    lvl = float((fg > 0).sum()) / float(fg.size)
+                    motion_trigger = lvl > float(self.motion_threshold.get())
+                person_count = len(detections)
 
-            new_event, finished_event = self.recorders[slot].update(annotated, motion_trigger, person_count)
-            if new_event:
-                self._handle_new_event(new_event)
-            if finished_event:
-                self._handle_finished_event(finished_event)
+                new_event, finished_event = self.recorders[slot].update(annotated, motion_trigger, person_count)
+                if new_event:
+                    self._handle_new_event(new_event)
+                if finished_event:
+                    self._handle_finished_event(finished_event)
+            except Exception as e:
+                self.logger.error(f"frame-update-failed-slot-{slot}", exc_info=True)
+                # Don't show error dialog in loop, just log it
+                # Optionally update status for user visibility
+                if slot == 0 or (slot == 1 and self.num_cams.get() == 2):
+                    self.status_var.set(f"Kamera {slot + 1}: virhe kuvan käsittelyssä")
 
         # Update recording indicator
         self._update_recording_indicator()
@@ -501,12 +513,17 @@ class CameraApp:
         self.playback_state.set(f"playing @{self.playback_speed.get():.1f}x" if self.playback_state.get().startswith("playing") else self.playback_state.get())
 
     def playback_play(self) -> None:
-        if self.playback_path and (self.playback_vc is None or not self.playback_vc.isOpened()):
-            self.playback_vc = cv2.VideoCapture(self.playback_path)
-        if self.playback_vc is None:
-            return
-        self.playback_state.set(f"playing @{self.playback_speed.get():.1f}x")
-        self.playback_last_tick = 0.0
+        try:
+            if self.playback_path and (self.playback_vc is None or not self.playback_vc.isOpened()):
+                self.playback_vc = cv2.VideoCapture(self.playback_path)
+            if self.playback_vc is None or not self.playback_vc.isOpened():
+                messagebox.showwarning("Toisto", "Tallennetta ei voitu avata. Valitse tallenne listasta.")
+                return
+            self.playback_state.set(f"playing @{self.playback_speed.get():.1f}x")
+            self.playback_last_tick = 0.0
+        except Exception as e:
+            self.logger.error("playback-play-failed", exc_info=True)
+            messagebox.showerror("Virhe", f"Toiston käynnistys epäonnistui: {str(e)}")
 
     def playback_pause(self) -> None:
         if self.playback_state.get().startswith("playing"):
@@ -792,14 +809,20 @@ class CameraApp:
                 self._pan_camera(1, dx, dy)
 
     def save_snapshot(self) -> None:
-        slot = 0 if self.indices[0] is not None else (1 if self.indices[1] is not None else None)
-        if slot is None or self.last_frames_bgr[slot] is None:
-            messagebox.showinfo("Huom", "Ei kuvaa tallennettavana.")
-            return
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        path = self.record_dir / f"snapshot_cam{slot}_{ts}.png"
-        cv2.imwrite(str(path), self.last_frames_bgr[slot])
-        messagebox.showinfo("Tallennettu", f"Kuvakaappaus tallennettu:\n{path}")
+        try:
+            slot = 0 if self.indices[0] is not None else (1 if self.indices[1] is not None else None)
+            if slot is None or self.last_frames_bgr[slot] is None:
+                messagebox.showinfo("Huom", "Ei kuvaa tallennettavana.")
+                return
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            path = self.record_dir / f"snapshot_cam{slot}_{ts}.png"
+            success = cv2.imwrite(str(path), self.last_frames_bgr[slot])
+            if not success:
+                raise RuntimeError("Kuvan kirjoitus epäonnistui")
+            messagebox.showinfo("Tallennettu", f"Kuvakaappaus tallennettu:\n{path}")
+        except Exception as e:
+            self.logger.error("snapshot-failed", exc_info=True)
+            messagebox.showerror("Virhe", f"Kuvakaappauksen tallennus epäonnistui: {str(e)}")
 
     def _open_recordings_folder(self) -> None:
         try:
