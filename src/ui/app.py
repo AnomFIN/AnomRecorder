@@ -13,6 +13,7 @@ import logging
 import os
 import sys
 import time
+import threading
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -31,6 +32,8 @@ from ..services.recording import RecorderConfig, RollingRecorder
 from .theme import PALETTE, apply_dark_theme
 from ..utils.resources import find_resource
 from ..utils.zoom import ZoomState, crop_zoom
+from ..utils.hotkeys import HotkeyConfig
+from ..utils.reconnect import ReconnectState
 
 # Where code learns and brands scale.
 
@@ -65,6 +68,7 @@ class CameraApp:
         self.num_cams = tk.IntVar(value=1)
         self.enable_motion = tk.BooleanVar(value=True)
         self.enable_person = tk.BooleanVar(value=True)
+        self.is_recording = tk.BooleanVar(value=False)  # Track recording state
 
         self.zoom_states = [ZoomState(), ZoomState()]
         self.zoom_labels = [tk.StringVar(value="1.0x"), tk.StringVar(value="1.0x")]
@@ -74,6 +78,9 @@ class CameraApp:
         self.frame_imgs: List[Optional[ImageTk.PhotoImage]] = [None, None]
         self.last_frames_bgr: List[Optional[np.ndarray]] = [None, None]
         self.camera_list: List[Any] = []
+        
+        # Reconnect states for each camera
+        self.reconnect_states = [ReconnectState(), ReconnectState()]
 
         self.record_dir = Path(os.getcwd()) / "recordings"
         self.record_dir.mkdir(parents=True, exist_ok=True)
@@ -90,6 +97,10 @@ class CameraApp:
         self.logo_alpha = tk.DoubleVar(value=0.25)
         self.logo_path: Optional[str] = find_resource("logo.png")
         self.logo_bgra: Optional[np.ndarray] = None
+        self.logo_preview_img: Optional[ImageTk.PhotoImage] = None
+        
+        # Hotkeys
+        self.hotkeys = HotkeyConfig()
 
         self._detector = PersonDetector()
         self._bgsubs = [cv2.createBackgroundSubtractorMOG2(history=300, varThreshold=16, detectShadows=True) for _ in range(2)]
@@ -105,6 +116,9 @@ class CameraApp:
         self.playback_path: Optional[str] = None
         self.playback_img: Optional[ImageTk.PhotoImage] = None
         self.playback_last_tick = time.time()
+        
+        # Refresh lock to prevent concurrent refreshes
+        self._refresh_lock = threading.Lock()
 
         self._load_settings()
         self.motion_thresh_label_var.set(f"{int(float(self.motion_threshold.get()) * 100)} %")
@@ -112,10 +126,13 @@ class CameraApp:
         self._load_logo(self.logo_path)
         self._update_logo_preview()
         self._update_usage_label()
+        self._load_existing_recordings()  # Load recordings from disk
         self.refresh_cameras()
         self.update_layout()
+        self._bind_hotkeys()  # Bind hotkeys
         self.root.after(UPDATE_INTERVAL_MS, self.update_frames)
         self.root.after(2000, self._tick_usage)
+        self.root.after(5000, self._tick_reconnect)  # Periodic reconnect check
 
     # ------------------------------------------------------------------
     # UI construction
@@ -164,8 +181,14 @@ class CameraApp:
         ttk.Radiobutton(top_bar, text="2", variable=self.num_cams, value=2, command=self.update_layout).pack(side=tk.LEFT)
         ttk.Radiobutton(top_bar, text="Tallenteet", variable=self.num_cams, value=3, command=self.select_recordings_view).pack(side=tk.LEFT)
 
-        ttk.Button(top_bar, text="Päivitä", command=self.refresh_cameras).pack(side=tk.LEFT, padx=(16, 0))
+        ttk.Button(top_bar, text="Päivitä", command=self.refresh_cameras_async).pack(side=tk.LEFT, padx=(16, 0))
         ttk.Button(top_bar, text="Kuvakaappaus", command=self.save_snapshot).pack(side=tk.LEFT, padx=(8, 0))
+        
+        # Recording indicator
+        self.recording_indicator_label = ttk.Label(top_bar, textvariable=self.recording_indicator_var, 
+                                                    foreground=PALETTE["success"])
+        self.recording_indicator_label.pack(side=tk.LEFT, padx=(16, 0))
+        
         ttk.Button(top_bar, text="Sulje", command=self.on_close, style="Accent.TButton").pack(side=tk.RIGHT)
 
         options = ttk.Frame(self.live_tab)
@@ -217,11 +240,13 @@ class CameraApp:
         ttk.Label(top, text="Tallenteet").pack(side=tk.LEFT)
         ttk.Button(top, text="Avaa kansio", command=self._open_recordings_folder).pack(side=tk.LEFT, padx=8)
         ttk.Button(top, text="Lisää merkintä", command=self.add_event_note).pack(side=tk.LEFT, padx=8)
+        ttk.Button(top, text="Poista valittu", command=self._delete_selected_recording).pack(side=tk.LEFT, padx=8)
+        ttk.Button(top, text="Poista kaikki", command=self._clear_recordings).pack(side=tk.LEFT, padx=8)
 
         body = ttk.Frame(self.events_tab)
         body.pack(fill=tk.BOTH, expand=True, pady=(12, 0))
         columns = ("nimi", "alku", "kesto", "henkilot", "merkinta")
-        self.events_view = ttk.Treeview(body, columns=columns, show="headings", height=14)
+        self.events_view = ttk.Treeview(body, columns=columns, show="headings", height=14, selectmode="extended")
         self.events_view.heading("nimi", text="Nimi")
         self.events_view.heading("alku", text="Alkuaika")
         self.events_view.heading("kesto", text="Kesto (s)")
@@ -262,8 +287,6 @@ class CameraApp:
         ttk.Label(storage, text="Raja (GB)").pack(side=tk.LEFT)
         entry = ttk.Entry(storage, textvariable=self.storage_limit_gb, width=8)
         entry.pack(side=tk.LEFT, padx=8)
-        ttk.Button(storage, text="Tallenna", command=self._save_limit).pack(side=tk.LEFT)
-        ttk.Button(storage, text="Tyhjennä", command=self._clear_recordings).pack(side=tk.LEFT, padx=6)
         ttk.Label(storage, textvariable=self.usage_label_var).pack(side=tk.RIGHT)
 
         branding = ttk.Labelframe(outer, text="Brändäys")
@@ -293,8 +316,34 @@ class CameraApp:
         motion = ttk.Labelframe(outer, text="Liikekynnys")
         motion.pack(fill=tk.X, padx=8, pady=8)
         ttk.Label(motion, text="Kynnys").pack(side=tk.LEFT)
-        ttk.Scale(motion, from_=0.0, to=0.3, orient=tk.HORIZONTAL, variable=self.motion_threshold, command=lambda _v: self._on_motion_change()).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=8)
+        ttk.Scale(motion, from_=0.0, to=0.3, orient=tk.HORIZONTAL, variable=self.motion_threshold, 
+                  command=lambda _v: self._on_motion_change()).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=8)
         ttk.Label(motion, textvariable=self.motion_thresh_label_var).pack(side=tk.LEFT, padx=(8, 0))
+        
+        # Camera reconnect settings
+        reconnect_frame = ttk.Labelframe(outer, text="Kamera-asetukset")
+        reconnect_frame.pack(fill=tk.X, padx=8, pady=8)
+        self.autoreconnect_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(reconnect_frame, text="Automaattinen uudelleenyhdistäminen", 
+                        variable=self.autoreconnect_var, 
+                        command=self._on_autoreconnect_change).pack(side=tk.LEFT)
+        
+        # Hotkeys display
+        hotkeys_frame = ttk.Labelframe(outer, text="Pikanäppäimet")
+        hotkeys_frame.pack(fill=tk.X, padx=8, pady=8)
+        self.hotkeys_text = tk.Text(hotkeys_frame, height=7, width=50, wrap=tk.WORD, 
+                                     background=PALETTE["background"], foreground=PALETTE["foreground"])
+        self.hotkeys_text.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+        self.hotkeys_text.insert("1.0", self.hotkeys.get_display_text())
+        self.hotkeys_text.config(state=tk.DISABLED)
+        
+        # Save settings button
+        save_frame = ttk.Frame(outer)
+        save_frame.pack(fill=tk.X, padx=8, pady=8)
+        ttk.Button(save_frame, text="Tallenna asetukset", command=self._save_settings_safely, 
+                   style="Accent.TButton").pack(side=tk.LEFT)
+        self.settings_status_var = tk.StringVar(value="")
+        ttk.Label(save_frame, textvariable=self.settings_status_var, foreground=PALETTE["success"]).pack(side=tk.LEFT, padx=(12, 0))
 
         # Save settings button
         save_frame = ttk.Frame(outer)
@@ -305,6 +354,44 @@ class CameraApp:
 
     # ------------------------------------------------------------------
     # Camera management
+    def refresh_cameras_async(self) -> None:
+        """Non-blocking camera refresh that doesn't stop recording."""
+        if not self._refresh_lock.acquire(blocking=False):
+            self.status_var.set("Päivitys jo käynnissä...")
+            return
+        
+        def _refresh_in_thread():
+            try:
+                cams = list_cameras()
+                # Schedule UI update in main thread
+                self.root.after(0, lambda: self._update_camera_list(cams))
+            except Exception as exc:
+                self.logger.warning("camera-refresh-failed", exc_info=exc)
+                self.root.after(0, lambda: self.status_var.set("Kameran päivitys epäonnistui"))
+            finally:
+                self._refresh_lock.release()
+        
+        thread = threading.Thread(target=_refresh_in_thread, daemon=True)
+        thread.start()
+        self.status_var.set("Päivitetään kameralistaa...")
+    
+    def _update_camera_list(self, cams: List[Any]) -> None:
+        """Update camera list in UI thread."""
+        self.camera_list = cams
+        labels = [name for name, _ in cams]
+        self.camera_combo1["values"] = labels
+        self.camera_combo2["values"] = labels
+        if labels:
+            if self.camera_combo1.current() == -1:
+                self.camera_combo1.current(0)
+                self.on_select_camera(0)
+            if self.num_cams.get() >= 2 and self.camera_combo2.current() == -1 and len(labels) > 1:
+                self.camera_combo2.current(1)
+                self.on_select_camera(1)
+            self.status_var.set("Kamerat: " + ", ".join(labels))
+        else:
+            self.status_var.set("Kameraa ei löydy. Kytke USB-kamera ja päivitä.")
+
     def refresh_cameras(self) -> None:
         """Refresh camera list without stopping active cameras."""
         try:
@@ -389,6 +476,18 @@ class CameraApp:
         if not self.root.winfo_exists():
             return
         self._update_playback_if_needed()
+        
+        # Check if any recorder is recording
+        is_recording = any(rec._recording for rec in self.recorders)
+        if is_recording != self.is_recording.get():
+            self.is_recording.set(is_recording)
+            if is_recording:
+                self.recording_indicator_var.set("● Tallentaa")
+                self.recording_indicator_label.configure(foreground=PALETTE["error"])
+            else:
+                self.recording_indicator_var.set("● Ei tallenna")
+                self.recording_indicator_label.configure(foreground=PALETTE["success"])
+        
         labels = [self.frame_label1, self.frame_label2]
         for slot in range(2):
             try:
@@ -594,18 +693,38 @@ class CameraApp:
         self.logo_path = data.get("logo_path") or self.logo_path
         self.logo_alpha.set(float(data.get("logo_alpha", self.logo_alpha.get())))
         self.motion_threshold.set(float(data.get("motion_threshold", self.motion_threshold.get())))
+        if "hotkeys" in data:
+            self.hotkeys = HotkeyConfig.from_dict(data["hotkeys"])
+        if "autoreconnect" in data:
+            reconnect_enabled = data["autoreconnect"]
+            for state in self.reconnect_states:
+                state.enabled = reconnect_enabled
 
     def _save_settings(self) -> None:
+        """Internal save without user feedback."""
         payload = {
             "storage_limit_gb": float(self.storage_limit_gb.get()),
             "logo_path": self.logo_path or "",
             "logo_alpha": float(self.logo_alpha.get()),
             "motion_threshold": float(self.motion_threshold.get()),
+            "hotkeys": self.hotkeys.to_dict(),
+            "autoreconnect": self.reconnect_states[0].enabled,
         }
         try:
             Path(self._settings_path()).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         except Exception:
             self.logger.warning("settings-save-failed", exc_info=True)
+    
+    def _save_settings_safely(self) -> None:
+        """Save settings with user feedback, doesn't stop recording."""
+        try:
+            self._save_settings()
+            self.settings_status_var.set("✓ Asetukset tallennettu")
+            self.root.after(3000, lambda: self.settings_status_var.set(""))
+            self.logger.info("settings-saved-by-user")
+        except Exception as exc:
+            self.logger.exception("settings-save-failed", exc_info=exc)
+            messagebox.showerror("Virhe", f"Asetusten tallennus epäonnistui: {exc}")
 
     def _save_limit(self) -> None:
         try:
@@ -792,6 +911,120 @@ class CameraApp:
         else:
             state.reset()
         self.zoom_labels[slot].set(f"{state.factor:.1f}x")
+    
+    def _pan(self, slot: int, dx: float, dy: float) -> None:
+        """Pan camera view."""
+        state = self.zoom_states[slot]
+        state.pan(dx, dy)
+    
+    def _bind_hotkeys(self) -> None:
+        """Bind keyboard shortcuts."""
+        try:
+            self.root.bind(f"<{self.hotkeys.refresh_live}>", lambda e: self.refresh_cameras_async())
+            self.root.bind(f"<{self.hotkeys.zoom_in}>", lambda e: self._zoom_active_camera("in"))
+            self.root.bind(f"<{self.hotkeys.zoom_out}>", lambda e: self._zoom_active_camera("out"))
+            self.root.bind(f"<{self.hotkeys.pan_up}>", lambda e: self._pan_active_camera(0, -0.1))
+            self.root.bind(f"<{self.hotkeys.pan_down}>", lambda e: self._pan_active_camera(0, 0.1))
+            self.root.bind(f"<{self.hotkeys.pan_left}>", lambda e: self._pan_active_camera(-0.1, 0))
+            self.root.bind(f"<{self.hotkeys.pan_right}>", lambda e: self._pan_active_camera(0.1, 0))
+            # Mouse wheel zoom with Ctrl
+            self.root.bind("<Control-MouseWheel>", self._on_mouse_wheel_zoom)
+        except Exception as exc:
+            self.logger.warning("hotkey-binding-failed", exc_info=exc)
+    
+    def _zoom_active_camera(self, direction: str) -> None:
+        """Zoom the active camera."""
+        slot = 0 if self.indices[0] is not None else (1 if self.indices[1] is not None else None)
+        if slot is not None:
+            self._update_zoom(slot, direction)
+    
+    def _pan_active_camera(self, dx: float, dy: float) -> None:
+        """Pan the active camera."""
+        slot = 0 if self.indices[0] is not None else (1 if self.indices[1] is not None else None)
+        if slot is not None:
+            self._pan(slot, dx, dy)
+    
+    def _on_mouse_wheel_zoom(self, event) -> None:
+        """Handle Ctrl+MouseWheel zoom."""
+        slot = 0 if self.indices[0] is not None else (1 if self.indices[1] is not None else None)
+        if slot is not None:
+            if event.delta > 0:
+                self._update_zoom(slot, "in")
+            else:
+                self._update_zoom(slot, "out")
+    
+    def _attempt_reconnect(self, slot: int) -> None:
+        """Attempt to reconnect a camera."""
+        if self.indices[slot] is None:
+            return
+        try:
+            self.reconnect_states[slot].record_attempt()
+            self.start_camera(slot, self.indices[slot])
+            if self.caps[slot] is not None:
+                self.status_var.set(f"Kamera {slot + 1} yhdistetty uudelleen")
+                self.logger.info("camera-reconnected", extra={"slot": slot})
+        except Exception as exc:
+            self.logger.warning("reconnect-failed", extra={"slot": slot}, exc_info=exc)
+    
+    def _tick_reconnect(self) -> None:
+        """Periodic check for camera reconnection."""
+        if self.root.winfo_exists():
+            self.root.after(5000, self._tick_reconnect)
+    
+    def _on_autoreconnect_change(self) -> None:
+        """Handle autoreconnect setting change."""
+        enabled = self.autoreconnect_var.get()
+        for state in self.reconnect_states:
+            state.enabled = enabled
+        self._save_settings()
+    
+    def _load_existing_recordings(self) -> None:
+        """Load existing recordings from disk on startup."""
+        try:
+            for file in sorted(self.record_dir.glob("*.avi")):
+                if not file.is_file():
+                    continue
+                self.event_counter += 1
+                event = EventItem(
+                    id=self.event_counter,
+                    name=file.stem,
+                    path=str(file),
+                    start=datetime.fromtimestamp(file.stat().st_mtime),
+                    end=None,
+                    duration=None,
+                    persons_max=0,
+                )
+                self.events.append(event)
+            self.refresh_events_view()
+            self.logger.info("loaded-existing-recordings", extra={"count": len(self.events)})
+        except Exception as exc:
+            self.logger.warning("load-recordings-failed", exc_info=exc)
+    
+    def _delete_selected_recording(self) -> None:
+        """Delete selected recording(s) from list."""
+        selection = self.events_view.selection()
+        if not selection:
+            messagebox.showinfo("Huom", "Valitse ensin tallenne(et).")
+            return
+        
+        count = len(selection)
+        if not messagebox.askyesno("Vahvista", f"Poistetaanko {count} tallenne(tta)?"):
+            return
+        
+        for path_str in selection:
+            try:
+                path = Path(path_str)
+                if path.exists():
+                    path.unlink()
+                # Remove from events list
+                self.events = [e for e in self.events if e.path != path_str]
+                self.logger.info("recording-deleted", extra={"path": path_str})
+            except Exception as exc:
+                self.logger.warning("delete-failed", extra={"path": path_str}, exc_info=exc)
+                messagebox.showerror("Virhe", f"Poisto epäonnistui: {path_str}\n{exc}")
+        
+        self.refresh_events_view()
+        self._update_usage_label()
 
     def _pan_camera(self, slot: int, dx: float, dy: float) -> None:
         """Pan a specific camera's view."""

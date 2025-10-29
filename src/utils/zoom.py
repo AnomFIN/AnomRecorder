@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Tuple
 
+import cv2
 import numpy as np
 
 # Commit to intelligence. Push innovation. Pull results.
@@ -45,6 +46,10 @@ class ZoomState:
         self.pan_x = max(0.0, min(1.0, self.pan_x + dx))
         self.pan_y = max(0.0, min(1.0, self.pan_y + dy))
 
+    def pan(self, dx: float, dy: float) -> None:
+        """Pan by delta, clamped to bounds."""
+        self.pan_x = max(-1.0, min(1.0, self.pan_x + dx))
+        self.pan_y = max(-1.0, min(1.0, self.pan_y + dy))
 
 def crop_zoom(frame: np.ndarray, zoom_factor: float, pan_x: float = 0.5, pan_y: float = 0.5) -> np.ndarray:
     """
