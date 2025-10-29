@@ -119,6 +119,7 @@ class CameraApp:
         self.refresh_cameras()
         self.update_layout()
         self._update_logo_preview()
+        self._setup_hotkeys()
         self.root.after(UPDATE_INTERVAL_MS, self.update_frames)
         self.root.after(2000, self._tick_usage)
 
@@ -830,6 +831,35 @@ class CameraApp:
 
     # ------------------------------------------------------------------
     # Misc actions
+    def _setup_hotkeys(self) -> None:
+        """Setup keyboard hotkeys for common actions."""
+        # R = Refresh cameras
+        self.root.bind("r", lambda e: self.refresh_cameras())
+        self.root.bind("R", lambda e: self.refresh_cameras())
+        
+        # + / - for zoom
+        self.root.bind("<plus>", lambda e: self._hotkey_zoom_in())
+        self.root.bind("<equal>", lambda e: self._hotkey_zoom_in())  # + without shift
+        self.root.bind("<minus>", lambda e: self._hotkey_zoom_out())
+        
+        # Escape to stop playback
+        self.root.bind("<Escape>", lambda e: self.playback_stop())
+        
+        # Ctrl+MouseWheel for zoom (handled in frame labels later if needed)
+        self.logger.info("hotkeys-setup")
+    
+    def _hotkey_zoom_in(self) -> None:
+        """Zoom in on active camera."""
+        slot = 0 if self.indices[0] is not None else (1 if self.indices[1] is not None else None)
+        if slot is not None:
+            self._update_zoom(slot, "in")
+    
+    def _hotkey_zoom_out(self) -> None:
+        """Zoom out on active camera."""
+        slot = 0 if self.indices[0] is not None else (1 if self.indices[1] is not None else None)
+        if slot is not None:
+            self._update_zoom(slot, "out")
+    
     def _update_zoom(self, slot: int, direction: str) -> None:
         state = self.zoom_states[slot]
         if direction == "in":
