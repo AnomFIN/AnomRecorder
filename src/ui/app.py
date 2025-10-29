@@ -74,6 +74,12 @@ class CameraApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("AnomRecorder — AnomFIN")
+        
+        # Make window resizable with constraints
+        self.root.minsize(1024, 600)
+        self.root.maxsize(2560, 1440)
+        self.root.geometry("1280x800")
+        
         apply_dark_theme(root)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
@@ -132,6 +138,11 @@ class CameraApp:
         # Audio settings
         self.save_audio = tk.BooleanVar(value=True)
         self.selected_audio_output = tk.StringVar(value="Default")
+        
+        # Autoreconnect settings
+        self.enable_autoreconnect = tk.BooleanVar(value=False)
+        self.reconnect_attempts = [0, 0]  # Track reconnect attempts per camera
+        self.reconnect_delay = [1.0, 1.0]  # Exponential backoff delay per camera
 
         self._load_settings()
         self.motion_thresh_label_var.set(f"{int(float(self.motion_threshold.get()) * 100)} %")
@@ -313,6 +324,11 @@ class CameraApp:
         self.audio_output_combo["values"] = ["Default", "Järjestelmän oletus"]
         self.audio_output_combo.pack(side=tk.LEFT, padx=8)
         ttk.Button(audio, text="Tallenna asetukset", command=self._save_settings_safe).pack(side=tk.LEFT, padx=8)
+        
+        # Camera autoreconnect
+        reconnect = ttk.Labelframe(outer, text="Kameran autoyhdistys")
+        reconnect.pack(fill=tk.X, padx=8, pady=8)
+        ttk.Checkbutton(reconnect, text="Yhdistä automaattisesti uudelleen katkoksen jälkeen", variable=self.enable_autoreconnect).pack(side=tk.LEFT, padx=8)
 
         ttk.Label(outer, text="Kamerajärjestelmä by AnomFIN", foreground=PALETTE["muted"]).pack(anchor=tk.E, pady=(12, 0))
 
@@ -424,9 +440,17 @@ class CameraApp:
                 continue
             cap = self.caps[slot]
             if cap is None:
+                # Try autoreconnect if enabled
+                if self.enable_autoreconnect.get() and self.indices[slot] is not None:
+                    self._try_autoreconnect(slot)
                 continue
             ok, frame = cap.read()
             if not ok:
+                # Camera disconnected, try autoreconnect
+                if self.enable_autoreconnect.get():
+                    self.logger.warning(f"camera-{slot}-disconnected")
+                    self.stop_camera(slot)
+                    self._schedule_reconnect(slot)
                 continue
             self.last_frames_bgr[slot] = frame.copy()
             detections = self._detector.detect(frame) if self.enable_person.get() else []
@@ -611,6 +635,7 @@ class CameraApp:
         self.motion_threshold.set(float(data.get("motion_threshold", self.motion_threshold.get())))
         self.save_audio.set(bool(data.get("save_audio", True)))
         self.selected_audio_output.set(str(data.get("selected_audio_output", "Default")))
+        self.enable_autoreconnect.set(bool(data.get("enable_autoreconnect", False)))
 
     def _save_settings(self) -> None:
         payload = {
@@ -620,6 +645,7 @@ class CameraApp:
             "motion_threshold": float(self.motion_threshold.get()),
             "save_audio": bool(self.save_audio.get()),
             "selected_audio_output": str(self.selected_audio_output.get()),
+            "enable_autoreconnect": bool(self.enable_autoreconnect.get()),
         }
         try:
             # Atomic write: write to temp file then rename
@@ -907,6 +933,56 @@ class CameraApp:
         except Exception as exc:
             self.logger.exception("settings-save-failed", exc_info=exc)
             messagebox.showerror("Virhe", f"Asetusten tallennus epäonnistui: {exc}")
+    
+    def _schedule_reconnect(self, slot: int) -> None:
+        """Schedule a reconnection attempt with exponential backoff."""
+        if not self.enable_autoreconnect.get():
+            return
+        
+        delay_ms = int(self.reconnect_delay[slot] * 1000)
+        self.reconnect_delay[slot] = min(self.reconnect_delay[slot] * 2, 30.0)  # Max 30 seconds
+        self.reconnect_attempts[slot] += 1
+        
+        self.logger.info(f"scheduling-reconnect", extra={
+            "slot": slot,
+            "attempt": self.reconnect_attempts[slot],
+            "delay_ms": delay_ms
+        })
+        
+        self.root.after(delay_ms, lambda: self._try_autoreconnect(slot))
+    
+    def _try_autoreconnect(self, slot: int) -> None:
+        """Try to reconnect camera."""
+        if not self.enable_autoreconnect.get() or self.caps[slot] is not None:
+            return
+        
+        saved_index = self.indices[slot]
+        if saved_index is None:
+            return
+        
+        try:
+            cap = cv2.VideoCapture(saved_index, cv2.CAP_DSHOW)
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+            
+            if cap.isOpened():
+                # Test read
+                ok, _ = cap.read()
+                if ok:
+                    self.caps[slot] = cap
+                    self.reconnect_attempts[slot] = 0
+                    self.reconnect_delay[slot] = 1.0
+                    self.status_var.set(f"Kamera {slot + 1} yhdistetty uudelleen")
+                    self.logger.info(f"camera-{slot}-reconnected")
+                    return
+            
+            cap.release()
+        except Exception as exc:
+            self.logger.warning(f"reconnect-failed-slot-{slot}", exc_info=exc)
+        
+        # Schedule next attempt if still disconnected
+        if self.reconnect_attempts[slot] < 10:  # Max 10 attempts
+            self._schedule_reconnect(slot)
 
     def on_close(self) -> None:
         self.logger.info("shutdown")
