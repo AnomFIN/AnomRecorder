@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -23,6 +24,9 @@ import numpy as np
 import tkinter as tk
 from PIL import Image, ImageTk
 from tkinter import filedialog, messagebox, simpledialog, ttk
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
+import send2trash
 
 from ..core.detection import PersonDetector
 from ..core.humanize import format_bytes, format_percentage, format_timestamp
@@ -38,6 +42,20 @@ LOGGER = logging.getLogger("anomrecorder.ui")
 
 UPDATE_INTERVAL_MS = 33
 PLAYBACK_BASE_INTERVAL = 1.0 / 30.0
+
+
+class RecordingsWatcher(FileSystemEventHandler):
+    """Watches recordings directory for changes."""
+    def __init__(self, callback):
+        self.callback = callback
+        
+    def on_created(self, event):
+        if not event.is_directory and event.src_path.endswith('.avi'):
+            self.callback()
+    
+    def on_deleted(self, event):
+        if not event.is_directory:
+            self.callback()
 
 
 @dataclass
@@ -65,9 +83,12 @@ class CameraApp:
         self.num_cams = tk.IntVar(value=1)
         self.enable_motion = tk.BooleanVar(value=True)
         self.enable_person = tk.BooleanVar(value=True)
+        self.is_recording = [False, False]  # Track recording state per camera
 
         self.zoom_states = [ZoomState(), ZoomState()]
         self.zoom_labels = [tk.StringVar(value="1.0x"), tk.StringVar(value="1.0x")]
+        self.pan_x = [0, 0]  # Pan offset X for each camera
+        self.pan_y = [0, 0]  # Pan offset Y for each camera
 
         self.caps: List[Optional[cv2.VideoCapture]] = [None, None]
         self.indices: List[Optional[int]] = [None, None]
@@ -104,14 +125,24 @@ class CameraApp:
         self.playback_path: Optional[str] = None
         self.playback_img: Optional[ImageTk.PhotoImage] = None
         self.playback_last_tick = time.time()
+        
+        self.refreshing_cameras = False  # Flag to prevent concurrent refreshes
+        self.fs_observer: Optional[Observer] = None  # Filesystem watcher
+        
+        # Audio settings
+        self.save_audio = tk.BooleanVar(value=True)
+        self.selected_audio_output = tk.StringVar(value="Default")
 
         self._load_settings()
         self.motion_thresh_label_var.set(f"{int(float(self.motion_threshold.get()) * 100)} %")
         self._build_layout()
         self._load_logo(self.logo_path)
         self._update_usage_label()
+        self._setup_filesystem_watcher()
+        self._load_existing_recordings()
         self.refresh_cameras()
         self.update_layout()
+        self._setup_hotkeys()
         self.root.after(UPDATE_INTERVAL_MS, self.update_frames)
         self.root.after(2000, self._tick_usage)
 
@@ -156,6 +187,12 @@ class CameraApp:
 
         ttk.Button(top_bar, text="Päivitä", command=self.refresh_cameras).pack(side=tk.LEFT, padx=(16, 0))
         ttk.Button(top_bar, text="Kuvakaappaus", command=self.save_snapshot).pack(side=tk.LEFT, padx=(8, 0))
+        
+        # Recording indicator
+        self.recording_indicator_var = tk.StringVar(value="● Ei tallenna")
+        self.recording_indicator_label = ttk.Label(top_bar, textvariable=self.recording_indicator_var, foreground="#00ff00")
+        self.recording_indicator_label.pack(side=tk.LEFT, padx=(16, 0))
+        
         ttk.Button(top_bar, text="Sulje", command=self.on_close, style="Accent.TButton").pack(side=tk.RIGHT)
 
         options = ttk.Frame(self.live_tab)
@@ -188,6 +225,13 @@ class CameraApp:
         ttk.Button(block, text="+", width=3, command=lambda s=slot: self._update_zoom(s, "in")).pack(side=tk.LEFT, padx=4)
         ttk.Button(block, text="Reset", width=6, command=lambda s=slot: self._update_zoom(s, "reset")).pack(side=tk.LEFT, padx=4)
         ttk.Label(block, textvariable=self.zoom_labels[slot]).pack(side=tk.LEFT, padx=(6, 0))
+        
+        # Pan controls
+        ttk.Label(block, text="Pan:").pack(side=tk.LEFT, padx=(12, 4))
+        ttk.Button(block, text="↑", width=3, command=lambda s=slot: self._pan(s, 0, -20)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(block, text="↓", width=3, command=lambda s=slot: self._pan(s, 0, 20)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(block, text="←", width=3, command=lambda s=slot: self._pan(s, -20, 0)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(block, text="→", width=3, command=lambda s=slot: self._pan(s, 20, 0)).pack(side=tk.LEFT, padx=2)
 
     def _build_events_tab(self) -> None:
         top = ttk.Frame(self.events_tab)
@@ -195,6 +239,7 @@ class CameraApp:
         ttk.Label(top, text="Tallenteet").pack(side=tk.LEFT)
         ttk.Button(top, text="Avaa kansio", command=self._open_recordings_folder).pack(side=tk.LEFT, padx=8)
         ttk.Button(top, text="Lisää merkintä", command=self.add_event_note).pack(side=tk.LEFT, padx=8)
+        ttk.Button(top, text="Poista valitut", command=self._delete_selected_recordings, style="Accent.TButton").pack(side=tk.LEFT, padx=8)
 
         body = ttk.Frame(self.events_tab)
         body.pack(fill=tk.BOTH, expand=True, pady=(12, 0))
@@ -258,13 +303,46 @@ class CameraApp:
         ttk.Label(motion, text="Kynnys").pack(side=tk.LEFT)
         ttk.Scale(motion, from_=0.0, to=0.3, orient=tk.HORIZONTAL, variable=self.motion_threshold, command=lambda _v: self._on_motion_change()).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=8)
         ttk.Label(motion, textvariable=self.motion_thresh_label_var).pack(side=tk.LEFT, padx=(8, 0))
+        
+        # Audio settings
+        audio = ttk.Labelframe(outer, text="Ääniasetukset")
+        audio.pack(fill=tk.X, padx=8, pady=8)
+        ttk.Checkbutton(audio, text="Tallenna ääntä?", variable=self.save_audio).pack(side=tk.LEFT, padx=8)
+        ttk.Label(audio, text="Äänilähtö").pack(side=tk.LEFT, padx=(16, 4))
+        self.audio_output_combo = ttk.Combobox(audio, textvariable=self.selected_audio_output, width=20, state="readonly")
+        self.audio_output_combo["values"] = ["Default", "Järjestelmän oletus"]
+        self.audio_output_combo.pack(side=tk.LEFT, padx=8)
+        ttk.Button(audio, text="Tallenna asetukset", command=self._save_settings_safe).pack(side=tk.LEFT, padx=8)
 
         ttk.Label(outer, text="Kamerajärjestelmä by AnomFIN", foreground=PALETTE["muted"]).pack(anchor=tk.E, pady=(12, 0))
 
     # ------------------------------------------------------------------
     # Camera management
     def refresh_cameras(self) -> None:
-        cams = list_cameras()
+        """Refresh camera list in a non-blocking way using threading."""
+        if self.refreshing_cameras:
+            self.status_var.set("Kamerat päivitetään jo...")
+            return
+        
+        self.refreshing_cameras = True
+        self.status_var.set("Päivitetään kameroita...")
+        
+        def _refresh_thread():
+            try:
+                cams = list_cameras()
+                # Schedule UI update on main thread
+                self.root.after(0, lambda: self._update_camera_list(cams))
+            except Exception as exc:
+                self.logger.exception("camera-refresh-failed", exc_info=exc)
+                self.root.after(0, lambda: self._show_error("Virhe", f"Kameroiden päivitys epäonnistui: {exc}"))
+            finally:
+                self.refreshing_cameras = False
+        
+        thread = threading.Thread(target=_refresh_thread, daemon=True)
+        thread.start()
+    
+    def _update_camera_list(self, cams: List[Any]) -> None:
+        """Update camera list in UI (must be called from main thread)."""
         self.camera_list = cams
         labels = [name for name, _ in cams]
         self.camera_combo1["values"] = labels
@@ -281,6 +359,10 @@ class CameraApp:
             self.status_var.set("Kameraa ei löydy. Kytke USB-kamera ja päivitä.")
             self.stop_camera(0)
             self.stop_camera(1)
+    
+    def _show_error(self, title: str, message: str) -> None:
+        """Show error message in a thread-safe way."""
+        messagebox.showerror(title, message)
 
     def update_layout(self) -> None:
         if self.num_cams.get() == 1:
@@ -349,7 +431,7 @@ class CameraApp:
             self.last_frames_bgr[slot] = frame.copy()
             detections = self._detector.detect(frame) if self.enable_person.get() else []
             annotated = self._annotate(slot, frame, detections)
-            zoomed = crop_zoom(annotated, self.zoom_states[slot].factor)
+            zoomed = crop_zoom(annotated, self.zoom_states[slot].factor, self.pan_x[slot], self.pan_y[slot])
             display = cv2.resize(zoomed, (960, 540)) if zoomed.shape[1] > 960 else zoomed
             frame_rgb = cv2.cvtColor(display, cv2.COLOR_BGR2RGB)
             img = Image.fromarray(frame_rgb)
@@ -368,8 +450,13 @@ class CameraApp:
             new_event, finished_event = self.recorders[slot].update(annotated, motion_trigger, person_count)
             if new_event:
                 self._handle_new_event(new_event)
+                self.is_recording[slot] = True
             if finished_event:
                 self._handle_finished_event(finished_event)
+                self.is_recording[slot] = False
+        
+        # Update recording indicator
+        self._update_recording_indicator()
 
         self.root.after(UPDATE_INTERVAL_MS, self.update_frames)
 
@@ -522,6 +609,8 @@ class CameraApp:
         self.logo_path = data.get("logo_path") or self.logo_path
         self.logo_alpha.set(float(data.get("logo_alpha", self.logo_alpha.get())))
         self.motion_threshold.set(float(data.get("motion_threshold", self.motion_threshold.get())))
+        self.save_audio.set(bool(data.get("save_audio", True)))
+        self.selected_audio_output.set(str(data.get("selected_audio_output", "Default")))
 
     def _save_settings(self) -> None:
         payload = {
@@ -529,9 +618,14 @@ class CameraApp:
             "logo_path": self.logo_path or "",
             "logo_alpha": float(self.logo_alpha.get()),
             "motion_threshold": float(self.motion_threshold.get()),
+            "save_audio": bool(self.save_audio.get()),
+            "selected_audio_output": str(self.selected_audio_output.get()),
         }
         try:
-            Path(self._settings_path()).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            # Atomic write: write to temp file then rename
+            temp_path = Path(self._settings_path()).with_suffix('.tmp')
+            temp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            temp_path.replace(self._settings_path())
         except Exception:
             self.logger.warning("settings-save-failed", exc_info=True)
 
@@ -684,9 +778,147 @@ class CameraApp:
 
     def select_recordings_view(self) -> None:
         self.notebook.select(self.events_tab)
+    
+    def _setup_filesystem_watcher(self) -> None:
+        """Setup filesystem watcher for recordings directory."""
+        try:
+            event_handler = RecordingsWatcher(lambda: self.root.after(0, self._load_existing_recordings))
+            self.fs_observer = Observer()
+            self.fs_observer.schedule(event_handler, str(self.record_dir), recursive=False)
+            self.fs_observer.start()
+            self.logger.info("filesystem-watcher-started")
+        except Exception as exc:
+            self.logger.warning("filesystem-watcher-failed", exc_info=exc)
+    
+    def _load_existing_recordings(self) -> None:
+        """Load existing recordings from disk."""
+        try:
+            existing_files = sorted(self.record_dir.glob("recording_*.avi"), key=lambda f: f.stat().st_mtime)
+            # Only add new files that aren't already in events
+            existing_paths = {event.path for event in self.events}
+            for file_path in existing_files:
+                path_str = str(file_path)
+                if path_str not in existing_paths:
+                    self.event_counter += 1
+                    stat = file_path.stat()
+                    event = EventItem(
+                        id=self.event_counter,
+                        name=file_path.name,
+                        path=path_str,
+                        start=datetime.fromtimestamp(stat.st_mtime),
+                        end=datetime.fromtimestamp(stat.st_mtime),
+                        duration=0.0,
+                        persons_max=0,
+                    )
+                    self.events.append(event)
+            self.refresh_events_view()
+        except Exception as exc:
+            self.logger.warning("load-recordings-failed", exc_info=exc)
+    
+    def _delete_selected_recordings(self) -> None:
+        """Delete selected recordings, moving to trash when possible."""
+        selection = self.events_view.selection()
+        if not selection:
+            messagebox.showinfo("Huom", "Valitse ensin tallenteet.")
+            return
+        
+        count = len(selection)
+        if not messagebox.askyesno("Vahvista", f"Poistetaanko {count} tallenne(tta) roskakoriin?"):
+            return
+        
+        deleted = []
+        for path in selection:
+            try:
+                # Try to move to trash first
+                send2trash.send2trash(path)
+                deleted.append(path)
+                self.logger.info("recording-deleted", extra={"path": path})
+            except Exception as exc:
+                self.logger.warning("trash-failed", extra={"path": path}, exc_info=exc)
+                # Fallback: ask for permanent deletion
+                if messagebox.askyesno("Virhe", f"Roskakoriin siirto epäonnistui.\nPoista pysyvästi: {Path(path).name}?"):
+                    try:
+                        Path(path).unlink()
+                        deleted.append(path)
+                    except Exception as exc2:
+                        self.logger.exception("delete-failed", extra={"path": path}, exc_info=exc2)
+                        messagebox.showerror("Virhe", f"Poisto epäonnistui: {exc2}")
+        
+        # Remove from events list
+        self.events = [e for e in self.events if e.path not in deleted]
+        self.refresh_events_view()
+        self._update_usage_label()
+        
+        if deleted:
+            messagebox.showinfo("Valmis", f"{len(deleted)} tallenne(tta) poistettu.")
+    
+    def _update_recording_indicator(self) -> None:
+        """Update the recording indicator based on current state."""
+        is_any_recording = any(self.is_recording)
+        if is_any_recording:
+            self.recording_indicator_var.set("● Tallentaa")
+            self.recording_indicator_label.configure(foreground="#ff0000")
+        else:
+            self.recording_indicator_var.set("● Ei tallenna")
+            self.recording_indicator_label.configure(foreground="#00ff00")
+    
+    def _pan(self, slot: int, dx: int, dy: int) -> None:
+        """Pan the view for the given camera slot."""
+        self.pan_x[slot] += dx
+        self.pan_y[slot] += dy
+        # Panning will be applied during frame rendering
+    
+    def _setup_hotkeys(self) -> None:
+        """Setup keyboard shortcuts."""
+        self.root.bind("<space>", lambda e: self._toggle_recording())
+        self.root.bind("r", lambda e: self.refresh_cameras())
+        self.root.bind("R", lambda e: self.refresh_cameras())
+        self.root.bind("<plus>", lambda e: self._zoom_active_camera("in"))
+        self.root.bind("<minus>", lambda e: self._zoom_active_camera("out"))
+        self.root.bind("<Escape>", lambda e: self.on_close())
+        self.root.bind("<Up>", lambda e: self._pan_active_camera(0, -20))
+        self.root.bind("<Down>", lambda e: self._pan_active_camera(0, 20))
+        self.root.bind("<Left>", lambda e: self._pan_active_camera(-20, 0))
+        self.root.bind("<Right>", lambda e: self._pan_active_camera(20, 0))
+    
+    def _toggle_recording(self) -> None:
+        """Toggle recording state (placeholder - motion detection controls actual recording)."""
+        # In this app, recording is controlled by motion detection, not manual toggle
+        # This is a placeholder for future manual recording control
+        pass
+    
+    def _zoom_active_camera(self, direction: str) -> None:
+        """Zoom the active camera."""
+        slot = 0 if self.indices[0] is not None else (1 if self.indices[1] is not None else None)
+        if slot is not None:
+            self._update_zoom(slot, direction)
+    
+    def _pan_active_camera(self, dx: int, dy: int) -> None:
+        """Pan the active camera."""
+        slot = 0 if self.indices[0] is not None else (1 if self.indices[1] is not None else None)
+        if slot is not None:
+            self._pan(slot, dx, dy)
+    
+    def _save_settings_safe(self) -> None:
+        """Save settings without stopping recording and apply immediately."""
+        try:
+            self._save_settings()
+            messagebox.showinfo("Tallennettu", "Asetukset tallennettu ja otettu käyttöön.")
+        except Exception as exc:
+            self.logger.exception("settings-save-failed", exc_info=exc)
+            messagebox.showerror("Virhe", f"Asetusten tallennus epäonnistui: {exc}")
 
     def on_close(self) -> None:
         self.logger.info("shutdown")
+        
+        # Stop filesystem watcher
+        if self.fs_observer is not None:
+            try:
+                self.fs_observer.stop()
+                self.fs_observer.join(timeout=1.0)
+            except Exception:
+                pass
+        
         for cap in self.caps:
             if cap is not None:
                 try:
