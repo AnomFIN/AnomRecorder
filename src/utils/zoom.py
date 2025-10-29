@@ -1,8 +1,9 @@
-"""Zoom state helpers for video feeds.
+"""Zoom and pan state helpers for video feeds.
 
 Why this design:
-- Keep zoom math independent of Tkinter for straightforward testing.
-- Support incremental zoom with clamped bounds.
+- Keep zoom/pan math independent of Tkinter for straightforward testing.
+- Support incremental zoom with clamped bounds (including zoom out).
+- Support panning with boundary constraints.
 - Provide deterministic crop boxes for consistent rendering.
 """
 

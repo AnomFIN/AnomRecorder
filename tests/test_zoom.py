@@ -1,4 +1,4 @@
-"""Tests for zoom state helpers."""
+"""Tests for zoom and pan state helpers."""
 
 import numpy as np
 
@@ -11,6 +11,7 @@ def test_zoom_state_bounds():
     assert state.factor == 1.25
     state.zoom_out()
     assert state.factor == 1.0
+    # Can now zoom out below 1.0
     state.zoom_out()
     assert state.factor == 0.75  # Now supports zoom out below 1.0
     state.zoom_out()
