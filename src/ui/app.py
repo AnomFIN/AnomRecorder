@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -66,9 +67,14 @@ class CameraApp:
         self.enable_motion = tk.BooleanVar(value=True)
         self.enable_person = tk.BooleanVar(value=True)
 
-        self.zoom_states = [ZoomState(), ZoomState()]
+        self.zoom_states = [ZoomState(min_factor=0.5), ZoomState(min_factor=0.5)]
         self.zoom_labels = [tk.StringVar(value="1.0x"), tk.StringVar(value="1.0x")]
+        self.pan_offsets = [[0, 0], [0, 0]]  # [x, y] offset for each camera
+        self.panning_enabled = [tk.BooleanVar(value=False), tk.BooleanVar(value=False)]
 
+        self.recording_indicators = [tk.StringVar(value="●"), tk.StringVar(value="●")]
+        self.is_recording = [False, False]
+        
         self.caps: List[Optional[cv2.VideoCapture]] = [None, None]
         self.indices: List[Optional[int]] = [None, None]
         self.frame_imgs: List[Optional[ImageTk.PhotoImage]] = [None, None]
@@ -97,6 +103,11 @@ class CameraApp:
         self.status_var = tk.StringVar(value="Valitse kamera listasta.")
         self.usage_label_var = tk.StringVar(value="Käyttöaste: 0%, 0 MB / 5 GB")
         self.motion_thresh_label_var = tk.StringVar(value="5 %")
+        
+        self.hotkeys_enabled = tk.BooleanVar(value=True)
+        self.autoreconnect_enabled = tk.BooleanVar(value=True)
+        self.camera_refresh_in_progress = False
+        self.logo_preview_img: Optional[ImageTk.PhotoImage] = None
 
         self.playback_vc: Optional[cv2.VideoCapture] = None
         self.playback_state = tk.StringVar(value="stopped")
@@ -110,6 +121,8 @@ class CameraApp:
         self._build_layout()
         self._load_logo(self.logo_path)
         self._update_usage_label()
+        self._load_recordings_on_startup()
+        self._bind_hotkeys()
         self.refresh_cameras()
         self.update_layout()
         self.root.after(UPDATE_INTERVAL_MS, self.update_frames)
@@ -154,8 +167,19 @@ class CameraApp:
         ttk.Radiobutton(top_bar, text="2", variable=self.num_cams, value=2, command=self.update_layout).pack(side=tk.LEFT)
         ttk.Radiobutton(top_bar, text="Tallenteet", variable=self.num_cams, value=3, command=self.select_recordings_view).pack(side=tk.LEFT)
 
-        ttk.Button(top_bar, text="Päivitä", command=self.refresh_cameras).pack(side=tk.LEFT, padx=(16, 0))
-        ttk.Button(top_bar, text="Kuvakaappaus", command=self.save_snapshot).pack(side=tk.LEFT, padx=(8, 0))
+        self.refresh_btn = ttk.Button(top_bar, text="🔄 Päivitä", command=self.refresh_cameras)
+        self.refresh_btn.pack(side=tk.LEFT, padx=(16, 0))
+        ttk.Button(top_bar, text="📷 Kuvakaappaus", command=self.save_snapshot).pack(side=tk.LEFT, padx=(8, 0))
+        
+        # Recording indicators
+        indicator_frame = ttk.Frame(top_bar)
+        indicator_frame.pack(side=tk.LEFT, padx=(16, 0))
+        ttk.Label(indicator_frame, text="Tallentaa:").pack(side=tk.LEFT)
+        self.rec_indicator1 = ttk.Label(indicator_frame, textvariable=self.recording_indicators[0], foreground="green")
+        self.rec_indicator1.pack(side=tk.LEFT, padx=2)
+        self.rec_indicator2 = ttk.Label(indicator_frame, textvariable=self.recording_indicators[1], foreground="green")
+        self.rec_indicator2.pack(side=tk.LEFT, padx=2)
+        
         ttk.Button(top_bar, text="Sulje", command=self.on_close, style="Accent.TButton").pack(side=tk.RIGHT)
 
         options = ttk.Frame(self.live_tab)
@@ -175,8 +199,13 @@ class CameraApp:
 
         self.frame_label1 = ttk.Label(self.video_area)
         self.frame_label1.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
+        self.frame_label1.bind("<Button-1>", lambda e: self._on_video_click(0, e))
+        self.frame_label1.bind("<B1-Motion>", lambda e: self._on_video_drag(0, e))
+        
         self.frame_label2 = ttk.Label(self.video_area)
         self.frame_label2.grid(row=0, column=1, sticky="nsew", padx=6, pady=6)
+        self.frame_label2.bind("<Button-1>", lambda e: self._on_video_click(1, e))
+        self.frame_label2.bind("<B1-Motion>", lambda e: self._on_video_drag(1, e))
 
         ttk.Label(self.live_tab, textvariable=self.status_var, foreground=PALETTE["muted"]).pack(anchor=tk.W, pady=(12, 0))
 
@@ -184,10 +213,21 @@ class CameraApp:
         block = ttk.Frame(parent)
         block.pack(side=tk.LEFT, padx=(0 if slot == 0 else 24, 0))
         ttk.Label(block, text=f"Zoom {slot + 1}").pack(side=tk.LEFT)
-        ttk.Button(block, text="-", width=3, command=lambda s=slot: self._update_zoom(s, "out")).pack(side=tk.LEFT, padx=4)
-        ttk.Button(block, text="+", width=3, command=lambda s=slot: self._update_zoom(s, "in")).pack(side=tk.LEFT, padx=4)
-        ttk.Button(block, text="Reset", width=6, command=lambda s=slot: self._update_zoom(s, "reset")).pack(side=tk.LEFT, padx=4)
+        ttk.Button(block, text="🔍−", width=4, command=lambda s=slot: self._update_zoom(s, "out")).pack(side=tk.LEFT, padx=2)
+        ttk.Button(block, text="🔍+", width=4, command=lambda s=slot: self._update_zoom(s, "in")).pack(side=tk.LEFT, padx=2)
+        ttk.Button(block, text="Reset", width=6, command=lambda s=slot: self._update_zoom(s, "reset")).pack(side=tk.LEFT, padx=2)
         ttk.Label(block, textvariable=self.zoom_labels[slot]).pack(side=tk.LEFT, padx=(6, 0))
+        
+        # Pan controls
+        pan_frame = ttk.Frame(block)
+        pan_frame.pack(side=tk.LEFT, padx=(12, 0))
+        ttk.Label(pan_frame, text="Pan:").pack(side=tk.LEFT)
+        ttk.Checkbutton(pan_frame, text="🖱️", variable=self.panning_enabled[slot], 
+                       command=lambda s=slot: self._toggle_panning(s)).pack(side=tk.LEFT)
+        ttk.Button(pan_frame, text="↑", width=2, command=lambda s=slot: self._pan(s, 0, -20)).pack(side=tk.LEFT, padx=1)
+        ttk.Button(pan_frame, text="↓", width=2, command=lambda s=slot: self._pan(s, 0, 20)).pack(side=tk.LEFT, padx=1)
+        ttk.Button(pan_frame, text="←", width=2, command=lambda s=slot: self._pan(s, -20, 0)).pack(side=tk.LEFT, padx=1)
+        ttk.Button(pan_frame, text="→", width=2, command=lambda s=slot: self._pan(s, 20, 0)).pack(side=tk.LEFT, padx=1)
 
     def _build_events_tab(self) -> None:
         top = ttk.Frame(self.events_tab)
@@ -240,31 +280,77 @@ class CameraApp:
         ttk.Label(storage, text="Raja (GB)").pack(side=tk.LEFT)
         entry = ttk.Entry(storage, textvariable=self.storage_limit_gb, width=8)
         entry.pack(side=tk.LEFT, padx=8)
-        ttk.Button(storage, text="Tallenna", command=self._save_limit).pack(side=tk.LEFT)
         ttk.Button(storage, text="Tyhjennä", command=self._clear_recordings).pack(side=tk.LEFT, padx=6)
         ttk.Label(storage, textvariable=self.usage_label_var).pack(side=tk.RIGHT)
 
         branding = ttk.Labelframe(outer, text="Brändäys")
         branding.pack(fill=tk.X, padx=8, pady=8)
+        
+        logo_row = ttk.Frame(branding)
+        logo_row.pack(fill=tk.X, pady=4)
         self.logo_path_var = tk.StringVar(value=self.logo_path or "")
-        ttk.Label(branding, text="Logo").pack(side=tk.LEFT)
-        ttk.Entry(branding, textvariable=self.logo_path_var, width=40).pack(side=tk.LEFT, padx=8)
-        ttk.Button(branding, text="Valitse", command=self._choose_logo).pack(side=tk.LEFT)
-        ttk.Label(branding, text="Läpinäkyvyys").pack(side=tk.LEFT, padx=(16, 4))
-        ttk.Scale(branding, from_=0.0, to=1.0, orient=tk.HORIZONTAL, variable=self.logo_alpha, command=lambda _v: self._save_settings()).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=8)
+        ttk.Label(logo_row, text="Logo").pack(side=tk.LEFT)
+        ttk.Entry(logo_row, textvariable=self.logo_path_var, width=35).pack(side=tk.LEFT, padx=8)
+        ttk.Button(logo_row, text="📁 Valitse", command=self._choose_logo).pack(side=tk.LEFT)
+        
+        # Logo preview
+        preview_row = ttk.Frame(branding)
+        preview_row.pack(fill=tk.X, pady=4)
+        ttk.Label(preview_row, text="Esikatselu:").pack(side=tk.LEFT)
+        self.logo_preview_label = ttk.Label(preview_row, text="Ei logoa valittu")
+        self.logo_preview_label.pack(side=tk.LEFT, padx=8)
+        
+        alpha_row = ttk.Frame(branding)
+        alpha_row.pack(fill=tk.X, pady=4)
+        ttk.Label(alpha_row, text="Läpinäkyvyys").pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Scale(alpha_row, from_=0.0, to=1.0, orient=tk.HORIZONTAL, variable=self.logo_alpha).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=8)
 
         motion = ttk.Labelframe(outer, text="Liikekynnys")
         motion.pack(fill=tk.X, padx=8, pady=8)
         ttk.Label(motion, text="Kynnys").pack(side=tk.LEFT)
         ttk.Scale(motion, from_=0.0, to=0.3, orient=tk.HORIZONTAL, variable=self.motion_threshold, command=lambda _v: self._on_motion_change()).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=8)
         ttk.Label(motion, textvariable=self.motion_thresh_label_var).pack(side=tk.LEFT, padx=(8, 0))
+        
+        # Hotkeys and autoreconnect settings
+        advanced = ttk.Labelframe(outer, text="Lisäasetukset")
+        advanced.pack(fill=tk.X, padx=8, pady=8)
+        ttk.Checkbutton(advanced, text="Näppäinoikotiet käytössä", variable=self.hotkeys_enabled).pack(anchor=tk.W, pady=2)
+        ttk.Checkbutton(advanced, text="Automaattinen yhdistäminen uudelleen", variable=self.autoreconnect_enabled).pack(anchor=tk.W, pady=2)
+        
+        # Save button
+        save_frame = ttk.Frame(outer)
+        save_frame.pack(fill=tk.X, padx=8, pady=8)
+        ttk.Button(save_frame, text="💾 Tallenna asetukset", command=self._save_settings_safe, style="Accent.TButton").pack(side=tk.LEFT)
 
         ttk.Label(outer, text="Kamerajärjestelmä by AnomFIN", foreground=PALETTE["muted"]).pack(anchor=tk.E, pady=(12, 0))
 
     # ------------------------------------------------------------------
     # Camera management
     def refresh_cameras(self) -> None:
-        cams = list_cameras()
+        """Non-blocking camera refresh that doesn't stop recording or freeze UI."""
+        if self.camera_refresh_in_progress:
+            self.status_var.set("Kameran päivitys jo käynnissä...")
+            return
+        
+        self.camera_refresh_in_progress = True
+        self.refresh_btn.configure(state="disabled", text="⏳ Päivitetään...")
+        
+        def _refresh_worker():
+            try:
+                cams = list_cameras()
+                # Schedule UI update on main thread
+                self.root.after(0, lambda: self._apply_camera_list(cams))
+            except Exception as exc:
+                self.logger.exception("camera-refresh-failed", exc_info=exc)
+                self.root.after(0, lambda: self._show_error("Kameran päivitys epäonnistui", str(exc)))
+            finally:
+                self.root.after(0, lambda: self._finish_camera_refresh())
+        
+        thread = threading.Thread(target=_refresh_worker, daemon=True, name="CameraRefresh")
+        thread.start()
+    
+    def _apply_camera_list(self, cams: List[Any]) -> None:
+        """Apply camera list to UI (called on main thread)."""
         self.camera_list = cams
         labels = [name for name, _ in cams]
         self.camera_combo1["values"] = labels
@@ -279,8 +365,11 @@ class CameraApp:
             self.status_var.set("Kamerat: " + ", ".join(labels))
         else:
             self.status_var.set("Kameraa ei löydy. Kytke USB-kamera ja päivitä.")
-            self.stop_camera(0)
-            self.stop_camera(1)
+    
+    def _finish_camera_refresh(self) -> None:
+        """Cleanup after camera refresh."""
+        self.camera_refresh_in_progress = False
+        self.refresh_btn.configure(state="normal", text="🔄 Päivitä")
 
     def update_layout(self) -> None:
         if self.num_cams.get() == 1:
@@ -307,16 +396,52 @@ class CameraApp:
         if self.indices[slot] == index and self.caps[slot] is not None:
             return
         self.stop_camera(slot)
+        
+        try:
+            cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+            if not cap.isOpened():
+                self.status_var.set(f"Kamera {slot + 1}: avaaminen epäonnistui")
+                cap.release()
+                if self.autoreconnect_enabled.get():
+                    self._schedule_reconnect(slot, index, attempt=1)
+                return
+            self.caps[slot] = cap
+            self.indices[slot] = index
+            self.status_var.set("Live-katselu käynnissä")
+        except Exception as exc:
+            self.logger.exception(f"camera-start-failed-slot{slot}", exc_info=exc)
+            self._show_error("Kameran avaaminen epäonnistui", str(exc))
+            if self.autoreconnect_enabled.get():
+                self._schedule_reconnect(slot, index, attempt=1)
+    
+    def _schedule_reconnect(self, slot: int, index: int, attempt: int, max_attempts: int = 5) -> None:
+        """Schedule camera reconnection with exponential backoff."""
+        if attempt > max_attempts:
+            self.status_var.set(f"Kamera {slot + 1}: yhdistäminen epäonnistui {max_attempts} yrityksen jälkeen")
+            return
+        
+        delay_ms = min(1000 * (2 ** (attempt - 1)), 30000)  # Max 30 seconds
+        self.status_var.set(f"Kamera {slot + 1}: yritetään yhdistää uudelleen {attempt}/{max_attempts}...")
+        self.root.after(delay_ms, lambda: self._attempt_reconnect(slot, index, attempt, max_attempts))
+    
+    def _attempt_reconnect(self, slot: int, index: int, attempt: int, max_attempts: int) -> None:
+        """Attempt to reconnect to camera."""
+        if self.caps[slot] is not None:
+            return  # Already connected
+        
         cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-        if not cap.isOpened():
-            self.status_var.set(f"Kamera {slot + 1}: avaaminen epäonnistui")
+        if cap.isOpened():
+            self.caps[slot] = cap
+            self.indices[slot] = index
+            self.status_var.set(f"Kamera {slot + 1}: yhdistetty uudelleen!")
+            self.logger.info(f"camera-reconnect-success-slot{slot}", extra={"attempt": attempt})
+        else:
             cap.release()
-            return
-        self.caps[slot] = cap
-        self.indices[slot] = index
-        self.status_var.set("Live-katselu käynnissä")
+            self._schedule_reconnect(slot, index, attempt + 1, max_attempts)
 
     def stop_camera(self, slot: int) -> None:
         if self.caps[slot] is not None:
@@ -343,33 +468,51 @@ class CameraApp:
             cap = self.caps[slot]
             if cap is None:
                 continue
-            ok, frame = cap.read()
-            if not ok:
-                continue
-            self.last_frames_bgr[slot] = frame.copy()
-            detections = self._detector.detect(frame) if self.enable_person.get() else []
-            annotated = self._annotate(slot, frame, detections)
-            zoomed = crop_zoom(annotated, self.zoom_states[slot].factor)
-            display = cv2.resize(zoomed, (960, 540)) if zoomed.shape[1] > 960 else zoomed
-            frame_rgb = cv2.cvtColor(display, cv2.COLOR_BGR2RGB)
-            img = Image.fromarray(frame_rgb)
-            imgtk = ImageTk.PhotoImage(image=img)
-            self.frame_imgs[slot] = imgtk
-            label.configure(image=imgtk)
+            
+            try:
+                ok, frame = cap.read()
+                if not ok:
+                    # Camera disconnected - attempt reconnect if enabled
+                    if self.autoreconnect_enabled.get() and self.indices[slot] is not None:
+                        self.logger.warning(f"camera-read-failed-slot{slot}")
+                        self.stop_camera(slot)
+                        self._schedule_reconnect(slot, self.indices[slot], attempt=1)
+                    continue
+                
+                self.last_frames_bgr[slot] = frame.copy()
+                detections = self._detector.detect(frame) if self.enable_person.get() else []
+                annotated = self._annotate(slot, frame, detections)
+                zoomed = crop_zoom(annotated, self.zoom_states[slot].factor, tuple(self.pan_offsets[slot]))
+                display = cv2.resize(zoomed, (960, 540)) if zoomed.shape[1] > 960 else zoomed
+                frame_rgb = cv2.cvtColor(display, cv2.COLOR_BGR2RGB)
+                img = Image.fromarray(frame_rgb)
+                imgtk = ImageTk.PhotoImage(image=img)
+                self.frame_imgs[slot] = imgtk
+                label.configure(image=imgtk)
 
-            motion_trigger = False
-            if self.enable_motion.get():
-                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                fg = self._bgsubs[slot].apply(gray)
-                lvl = float((fg > 0).sum()) / float(fg.size)
-                motion_trigger = lvl > float(self.motion_threshold.get())
-            person_count = len(detections)
+                motion_trigger = False
+                if self.enable_motion.get():
+                    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                    fg = self._bgsubs[slot].apply(gray)
+                    lvl = float((fg > 0).sum()) / float(fg.size)
+                    motion_trigger = lvl > float(self.motion_threshold.get())
+                person_count = len(detections)
 
-            new_event, finished_event = self.recorders[slot].update(annotated, motion_trigger, person_count)
-            if new_event:
-                self._handle_new_event(new_event)
-            if finished_event:
-                self._handle_finished_event(finished_event)
+                new_event, finished_event = self.recorders[slot].update(annotated, motion_trigger, person_count)
+                
+                # Update recording indicator
+                was_recording = self.is_recording[slot]
+                self.is_recording[slot] = self.recorders[slot]._recording
+                if self.is_recording[slot] != was_recording:
+                    self._update_recording_indicator(slot)
+                
+                if new_event:
+                    self._handle_new_event(new_event)
+                if finished_event:
+                    self._handle_finished_event(finished_event)
+            
+            except Exception as exc:
+                self.logger.exception(f"frame-update-error-slot{slot}", exc_info=exc)
 
         self.root.after(UPDATE_INTERVAL_MS, self.update_frames)
 
@@ -522,18 +665,45 @@ class CameraApp:
         self.logo_path = data.get("logo_path") or self.logo_path
         self.logo_alpha.set(float(data.get("logo_alpha", self.logo_alpha.get())))
         self.motion_threshold.set(float(data.get("motion_threshold", self.motion_threshold.get())))
+        self.hotkeys_enabled.set(bool(data.get("hotkeys_enabled", True)))
+        self.autoreconnect_enabled.set(bool(data.get("autoreconnect_enabled", True)))
 
     def _save_settings(self) -> None:
+        """Internal save settings (used by sliders, etc)."""
         payload = {
             "storage_limit_gb": float(self.storage_limit_gb.get()),
             "logo_path": self.logo_path or "",
             "logo_alpha": float(self.logo_alpha.get()),
             "motion_threshold": float(self.motion_threshold.get()),
+            "hotkeys_enabled": bool(self.hotkeys_enabled.get()),
+            "autoreconnect_enabled": bool(self.autoreconnect_enabled.get()),
         }
         try:
             Path(self._settings_path()).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         except Exception:
             self.logger.warning("settings-save-failed", exc_info=True)
+    
+    def _save_settings_safe(self) -> None:
+        """Safe settings save from UI button - doesn't interrupt recording."""
+        try:
+            # Validate storage limit
+            value = float(self.storage_limit_gb.get())
+            if value <= 0:
+                raise ValueError("Storage limit must be > 0")
+            
+            # Save all settings atomically
+            self._save_settings()
+            self._enforce_storage_limit()
+            self._update_usage_label()
+            
+            # Show success message
+            messagebox.showinfo("Tallennettu", "Asetukset tallennettu onnistuneesti!")
+            self.logger.info("settings-saved-by-user")
+        except ValueError as exc:
+            messagebox.showerror("Virhe", f"Virheellinen arvo: {exc}")
+        except Exception as exc:
+            self.logger.exception("settings-save-error", exc_info=exc)
+            self._show_error("Asetusten tallennus epäonnistui", str(exc))
 
     def _save_limit(self) -> None:
         try:
@@ -567,20 +737,49 @@ class CameraApp:
         self.logo_path = path
         self.logo_path_var.set(path)
         self._load_logo(path)
-        self._save_settings()
+        self._update_logo_preview()
+
+    def _update_logo_preview(self) -> None:
+        """Update logo preview in settings tab."""
+        if self.logo_bgra is None:
+            self.logo_preview_label.configure(image="", text="Ei logoa valittu")
+            self.logo_preview_img = None
+            return
+        
+        try:
+            # Create preview image (max 100x100)
+            h, w = self.logo_bgra.shape[:2]
+            scale = min(100 / w, 100 / h, 1.0)
+            new_w, new_h = max(1, int(w * scale)), max(1, int(h * scale))
+            preview_bgra = cv2.resize(self.logo_bgra, (new_w, new_h), interpolation=cv2.INTER_AREA)
+            
+            # Convert BGRA to RGB
+            b, g, r, a = cv2.split(preview_bgra)
+            preview_rgb = cv2.merge((r, g, b))
+            
+            img = Image.fromarray(preview_rgb)
+            imgtk = ImageTk.PhotoImage(image=img)
+            self.logo_preview_img = imgtk
+            self.logo_preview_label.configure(image=imgtk, text="")
+        except Exception as exc:
+            self.logger.warning("logo-preview-failed", exc_info=exc)
+            self.logo_preview_label.configure(image="", text="Esikatseluvirhe")
 
     def _load_logo(self, path: Optional[str]) -> None:
         self.logo_bgra = None
         if not path:
             return
-        img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
-        if img is None:
-            return
-        if img.shape[2] == 3:
-            b, g, r = cv2.split(img)
-            a = np.full_like(b, 255)
-            img = cv2.merge((b, g, r, a))
-        self.logo_bgra = img
+        try:
+            img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
+            if img is None:
+                return
+            if img.shape[2] == 3:
+                b, g, r = cv2.split(img)
+                a = np.full_like(b, 255)
+                img = cv2.merge((b, g, r, a))
+            self.logo_bgra = img
+        except Exception as exc:
+            self.logger.warning("logo-load-failed", exc_info=exc)
 
     def _overlay_logo(self, frame_bgr: np.ndarray) -> np.ndarray:
         if self.logo_bgra is None:
@@ -659,7 +858,130 @@ class CameraApp:
             state.zoom_out()
         else:
             state.reset()
+            self.pan_offsets[slot] = [0, 0]  # Reset pan on zoom reset
         self.zoom_labels[slot].set(f"{state.factor:.1f}x")
+    
+    def _pan(self, slot: int, dx: int, dy: int) -> None:
+        """Pan the zoomed area by dx, dy pixels."""
+        self.pan_offsets[slot][0] += dx
+        self.pan_offsets[slot][1] += dy
+        # Clamp pan offsets (rough bounds)
+        max_offset = 500
+        self.pan_offsets[slot][0] = max(-max_offset, min(max_offset, self.pan_offsets[slot][0]))
+        self.pan_offsets[slot][1] = max(-max_offset, min(max_offset, self.pan_offsets[slot][1]))
+    
+    def _toggle_panning(self, slot: int) -> None:
+        """Toggle panning mode for video area."""
+        enabled = self.panning_enabled[slot].get()
+        cursor = "fleur" if enabled else ""
+        label = self.frame_label1 if slot == 0 else self.frame_label2
+        label.configure(cursor=cursor)
+    
+    def _on_video_click(self, slot: int, event) -> None:
+        """Handle click on video area for panning start."""
+        if self.panning_enabled[slot].get():
+            self._drag_start = (event.x, event.y)
+    
+    def _on_video_drag(self, slot: int, event) -> None:
+        """Handle drag on video area for panning."""
+        if self.panning_enabled[slot].get() and hasattr(self, '_drag_start'):
+            dx = event.x - self._drag_start[0]
+            dy = event.y - self._drag_start[1]
+            self._pan(slot, -dx, -dy)
+            self._drag_start = (event.x, event.y)
+    
+    def _update_recording_indicator(self, slot: int) -> None:
+        """Update recording indicator color."""
+        is_rec = self.is_recording[slot]
+        indicator = self.rec_indicator1 if slot == 0 else self.rec_indicator2
+        color = "red" if is_rec else "green"
+        text = "●"
+        indicator.configure(foreground=color)
+        self.recording_indicators[slot].set(text)
+    
+    def _show_error(self, title: str, message: str) -> None:
+        """Show error dialog."""
+        try:
+            messagebox.showerror(title, message)
+        except Exception:
+            self.logger.warning("error-dialog-failed")
+    
+    def _bind_hotkeys(self) -> None:
+        """Bind keyboard shortcuts."""
+        if not self.hotkeys_enabled.get():
+            return
+        
+        # Space: toggle recording (not implemented as recording is automatic)
+        # R: refresh cameras
+        self.root.bind("<r>", lambda e: self.refresh_cameras() if not self._is_typing() else None)
+        self.root.bind("<R>", lambda e: self.refresh_cameras() if not self._is_typing() else None)
+        
+        # +/- for zoom
+        self.root.bind("<plus>", lambda e: self._update_zoom(0, "in") if not self._is_typing() else None)
+        self.root.bind("<minus>", lambda e: self._update_zoom(0, "out") if not self._is_typing() else None)
+        self.root.bind("<equal>", lambda e: self._update_zoom(0, "in") if not self._is_typing() else None)  # + without shift
+        
+        # Arrow keys for panning
+        self.root.bind("<Up>", lambda e: self._pan(0, 0, -20) if not self._is_typing() else None)
+        self.root.bind("<Down>", lambda e: self._pan(0, 0, 20) if not self._is_typing() else None)
+        self.root.bind("<Left>", lambda e: self._pan(0, -20, 0) if not self._is_typing() else None)
+        self.root.bind("<Right>", lambda e: self._pan(0, 20, 0) if not self._is_typing() else None)
+        
+        # Escape: reset zoom/pan or stop actions
+        self.root.bind("<Escape>", lambda e: self._handle_escape())
+    
+    def _is_typing(self) -> bool:
+        """Check if user is typing in an entry widget."""
+        try:
+            focused = self.root.focus_get()
+            return isinstance(focused, (tk.Entry, tk.Text, ttk.Entry))
+        except Exception:
+            return False
+    
+    def _handle_escape(self) -> None:
+        """Handle escape key - reset zoom/pan."""
+        for slot in range(2):
+            self._update_zoom(slot, "reset")
+            self.panning_enabled[slot].set(False)
+            self._toggle_panning(slot)
+    
+    def _load_recordings_on_startup(self) -> None:
+        """Load existing recordings from disk on app startup."""
+        try:
+            files = sorted(self.record_dir.glob("recording_*.avi"), key=lambda f: f.stat().st_mtime, reverse=True)
+            for file in files:
+                try:
+                    # Parse timestamp from filename
+                    name = file.stem
+                    parts = name.split("_")
+                    if len(parts) >= 3:
+                        date_str = parts[-2]
+                        time_str = parts[-1]
+                        dt = datetime.strptime(f"{date_str}_{time_str}", "%Y%m%d_%H%M%S")
+                        
+                        # Get file size for duration estimation
+                        stat = file.stat()
+                        duration = stat.st_size / (1024 * 1024 * 5)  # Rough estimate: ~5MB/sec
+                        
+                        self.event_counter += 1
+                        event = EventItem(
+                            id=self.event_counter,
+                            name=file.name,
+                            path=str(file),
+                            start=dt,
+                            end=None,
+                            duration=duration if duration > 0 else None,
+                            persons_max=0,
+                        )
+                        self.events.append(event)
+                except Exception as exc:
+                    self.logger.warning(f"failed-to-load-recording: {file}", exc_info=exc)
+            
+            if self.events:
+                self.refresh_events_view()
+                self.logger.info(f"loaded-{len(self.events)}-recordings-on-startup")
+        except Exception as exc:
+            self.logger.exception("recordings-load-failed", exc_info=exc)
 
     def save_snapshot(self) -> None:
         slot = 0 if self.indices[0] is not None else (1 if self.indices[1] is not None else None)
