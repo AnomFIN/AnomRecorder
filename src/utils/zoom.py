@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Tuple
 
+import cv2
 import numpy as np
 
 # Commit to intelligence. Push innovation. Pull results.
@@ -20,11 +21,12 @@ import numpy as np
 @dataclass
 class ZoomState:
     factor: float = 1.0
-    min_factor: float = 0.5  # Allow zoom out to 0.5x
+    min_factor: float = 0.5
     max_factor: float = 4.0
     step: float = 0.25
-    pan_x: float = 0.0  # Pan offset as fraction of frame width (-1 to 1)
-    pan_y: float = 0.0  # Pan offset as fraction of frame height (-1 to 1)
+    # Pan offset in normalized coordinates (0.0 to 1.0)
+    pan_x: float = 0.5
+    pan_y: float = 0.5
 
     def zoom_in(self) -> float:
         self.factor = min(self.max_factor, self.factor + self.step)
@@ -36,70 +38,61 @@ class ZoomState:
 
     def reset(self) -> float:
         self.factor = 1.0
-        self.pan_x = 0.0
-        self.pan_y = 0.0
+        self.pan_x = 0.5
+        self.pan_y = 0.5
         return self.factor
     
     def pan(self, dx: float, dy: float) -> None:
-        """Pan by dx, dy (as fraction of frame size). Constrained to bounds."""
+        """Pan by normalized delta. Bounds enforced in crop_zoom."""
+        self.pan_x = max(0.0, min(1.0, self.pan_x + dx))
+        self.pan_y = max(0.0, min(1.0, self.pan_y + dy))
+
+    def pan(self, dx: float, dy: float) -> None:
+        """Pan by delta, clamped to bounds."""
         self.pan_x = max(-1.0, min(1.0, self.pan_x + dx))
         self.pan_y = max(-1.0, min(1.0, self.pan_y + dy))
-    
-    def pan_left(self, step: float = 0.1) -> None:
-        self.pan(-step, 0.0)
-    
-    def pan_right(self, step: float = 0.1) -> None:
-        self.pan(step, 0.0)
-    
-    def pan_up(self, step: float = 0.1) -> None:
-        self.pan(0.0, -step)
-    
-    def pan_down(self, step: float = 0.1) -> None:
-        self.pan(0.0, step)
 
-
-def crop_zoom(frame: np.ndarray, zoom_factor: float, pan_x: float = 0.0, pan_y: float = 0.0) -> np.ndarray:
-    """Crop and zoom frame with optional pan offset.
+def crop_zoom(frame: np.ndarray, zoom_factor: float, pan_x: float = 0.5, pan_y: float = 0.5) -> np.ndarray:
+    """
+    Crop frame based on zoom factor and pan position.
     
     Args:
-        frame: Input frame (H, W, C)
-        zoom_factor: Zoom factor (0.5 = zoom out, 1.0 = normal, 2.0 = zoom in)
-        pan_x: Pan offset in x as fraction of frame width (-1 to 1)
-        pan_y: Pan offset in y as fraction of frame height (-1 to 1)
+        frame: Input frame (BGR or RGB)
+        zoom_factor: Zoom level. >1.0 zooms in, <1.0 zooms out (adds border), 1.0 is original
+        pan_x: Horizontal pan position (0.0=left, 0.5=center, 1.0=right)
+        pan_y: Vertical pan position (0.0=top, 0.5=center, 1.0=bottom)
     
     Returns:
-        Cropped/zoomed frame
+        Zoomed/panned frame
     """
+    if zoom_factor == 1.0 and pan_x == 0.5 and pan_y == 0.5:
+        return frame
+    
     h, w = frame.shape[:2]
     
-    # For zoom < 1.0, we need to add padding
     if zoom_factor < 1.0:
-        # Calculate new dimensions
-        new_h = int(h / zoom_factor)
-        new_w = int(w / zoom_factor)
-        
-        # Create padded frame (black border)
-        pad_top = (new_h - h) // 2
-        pad_bottom = new_h - h - pad_top
-        pad_left = (new_w - w) // 2
-        pad_right = new_w - w - pad_left
-        
-        padded = np.pad(frame, ((pad_top, pad_bottom), (pad_left, pad_right), (0, 0)), mode='constant', constant_values=0)
-        return padded
+        # Zoom out: add black border
+        new_w = max(1, int(w / zoom_factor))
+        new_h = max(1, int(h / zoom_factor))
+        result = np.zeros((new_h, new_w, frame.shape[2]), dtype=frame.dtype)
+        x_offset = (new_w - w) // 2
+        y_offset = (new_h - h) // 2
+        result[y_offset:y_offset + h, x_offset:x_offset + w] = frame
+        return result
     
-    # For zoom >= 1.0, crop the frame
+    # Zoom in: crop with pan
     new_w = max(1, int(w / zoom_factor))
     new_h = max(1, int(h / zoom_factor))
     
-    # Calculate center position with pan offset
-    center_x = w // 2 + int(pan_x * w * 0.5)
-    center_y = h // 2 + int(pan_y * h * 0.5)
+    # Calculate center position based on pan
+    center_x = int(pan_x * w)
+    center_y = int(pan_y * h)
     
-    # Calculate crop box
+    # Calculate crop boundaries
     x0 = center_x - new_w // 2
     y0 = center_y - new_h // 2
     
-    # Constrain to frame bounds
+    # Bound to frame edges
     x0 = max(0, min(w - new_w, x0))
     y0 = max(0, min(h - new_h, y0))
     

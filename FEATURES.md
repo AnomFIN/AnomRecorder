@@ -1,166 +1,104 @@
-# Feature Implementation Guide
+# UI & Stability Improvements - User Guide
 
-This document describes the new features implemented in this PR.
+This document describes the new features and improvements added to AnomRecorder.
 
-## Priority A - Critical Fixes
+## New Features
 
-### 1. Non-Blocking Camera Refresh
-The "Päivitä" (Refresh) button now runs camera detection in a background thread to prevent UI freezing.
+### 1. Recording Indicator
+- A live recording indicator is now displayed at the top-left of the Live view
+- **Green (● Ei tallenna)**: No active recording
+- **Red (● Tallentaa)**: Recording is active
+- Updates automatically as recording starts and stops
 
-**Implementation**:
-- Uses Python threading for background camera detection
-- Updates UI via `root.after()` to maintain thread safety
-- Shows toast notifications for success/error
-- Prevents multiple simultaneous refresh operations
+### 2. Enhanced Zoom Controls
 
-**User Experience**:
-- UI remains responsive during refresh
-- Status messages show progress
-- Active recordings continue uninterrupted
+#### Zoom Out Support
+- You can now zoom out below 1.0x to see the entire frame with black borders
+- Zoom range: 0.5x - 4.0x (previously 1.0x - 4.0x)
+- Use the `-` button to zoom out, `+` to zoom in, and `Reset` to return to 1.0x
 
-### 2. Safe Settings Save
-Settings can be saved without stopping active recordings.
+#### Pan Controls
+- Pan the zoomed view using:
+  - **Arrow buttons**: ←↑↓→ buttons next to each zoom control
+  - **Keyboard arrows**: Use arrow keys on your keyboard to pan
+  - The active camera view will pan when using keyboard arrows
+- Panning is bounded to keep the content within frame edges
+- Works seamlessly while recording
 
-**Implementation**:
-- Settings save only writes to JSON file
-- Does not modify camera capture or recording state
-- "Tallenna asetukset" button provides explicit save action
+### 3. Settings Tab Improvements
 
-**Settings Saved**:
-- Storage limit (GB)
-- Logo path and transparency
-- Motion detection threshold
-- Autoreconnect preference
+#### Logo Preview
+- When you select a logo file, it now shows immediately in the Settings tab
+- Preview displays the logo at a reasonable size
+- No need to navigate away to see the logo
 
-### 3. Persistent Recordings List
-Recordings are loaded from disk on startup and monitored continuously.
+#### Explicit Save Button
+- New **"Tallenna asetukset"** button to save all settings
+- Settings are no longer auto-saved when you adjust sliders
+- If recording is active, you'll be asked to confirm before saving
+- Saving settings is safe and won't interrupt an active recording
 
-**Implementation**:
-- Scans `./recordings/` directory on startup
-- Parses timestamps from filenames (YYYYMMDD_HHMMSS format)
-- File watcher checks for new files every 5 seconds
-- Multi-select delete with confirmation dialogs
-- Safe deletion (attempts send2trash on Windows)
+### 4. Improved "Päivitä" Button
+- The Päivitä (Refresh) button is now non-blocking
+- It will not stop active cameras unnecessarily
+- If recording is active and no cameras are found, it won't stop the cameras
+- Better error messages if camera refresh fails
 
-## Priority B - Important Features
+### 5. Better Error Handling
+- All camera and I/O operations now have proper error handling
+- User-friendly error messages in Finnish
+- Errors are logged for troubleshooting
+- The application continues running even if one operation fails
 
-### 4. Zoom and Panning
-Enhanced zoom supporting both zoom in (>1.0) and zoom out (<1.0) with panning.
+## Usage Tips
 
-**Zoom Features**:
-- Range: 0.5x to 4.0x (step 0.25x)
-- Zoom out adds black padding around image
-- Zoom in crops to center
-- Reset button returns to 1.0x
+### Zooming and Panning
+1. Select a zoom level using the +/- buttons
+2. If zoomed in (>1.0x), use pan controls to move around:
+   - Click arrow buttons next to zoom controls
+   - Or use keyboard arrow keys
+3. Press `Reset` to return to center at 1.0x zoom
 
-**Pan Features**:
-- Pan buttons: ← ↑ ↓ →
-- Keyboard arrows for panning
-- Pan offsets constrained to ±1.0 (frame boundaries)
-- Pan resets with zoom reset
+### Safe Settings Changes
+1. Make your desired changes in the Settings tab (logo, transparency, motion threshold, storage limit)
+2. Click **"Tallenna asetukset"** when ready to save
+3. If recording is active, you'll see a confirmation dialog
+4. Settings will be applied without interrupting recording
 
-**Tests**:
-- 5 comprehensive tests for zoom/pan bounds and behavior
-- All tests passing
+### Recording Workflow
+1. Watch the recording indicator at the top-left of Live view
+2. Green means ready to record (waiting for motion/person detection)
+3. Red means actively recording
+4. You can safely:
+   - Change zoom and pan
+   - Navigate between tabs
+   - Adjust settings (with explicit save)
+   - Click Päivitä to refresh cameras
 
-### 5. Live Recording Indicator
-Visual indicators show recording status for each camera.
+## Troubleshooting
 
-**Implementation**:
-- Canvas widgets with colored dots
-- Red = recording, Green = idle
-- Tooltips on hover: "Tallentaa" / "Ei tallenna"
-- Updates in real-time during frame loop
+### Camera Issues
+- If a camera fails to start, you'll see an error message in Finnish
+- Check USB connection and try Päivitä
+- Error details are logged for debugging
 
-**Accessibility**:
-- Hover tooltips with Finnish text
-- Status updates in status bar
-- Clear visual distinction (red/green)
+### Settings Not Saving
+- Make sure to click "Tallenna asetukset" after making changes
+- If recording is active, confirm the dialog to proceed
+- Check logs if save fails
 
-### 6. Logo Preview
-Settings tab shows immediate preview of selected logo.
-
-**Implementation**:
-- Uses cv2 to read image
-- Resizes to max 200x100 for preview
-- Updates immediately on file selection
-- Handles RGBA and RGB formats
-
-### 7. Hotkeys
-Keyboard shortcuts for common operations.
-
-**Hotkey Mappings**:
-- `+` / `-`: Zoom in/out
-- Arrow keys: Pan view
-- `Esc`: Reset zoom and pan
-- `R`: Refresh cameras
-- `Space`: Reserved for future recording toggle
-
-**Documentation**:
-- Listed in Settings tab under "Pikanäppäimet"
-- Finnish descriptions
-- Applies to active camera
-
-### 8. Camera Autoreconnect
-Automatically attempts to reconnect cameras on failure.
-
-**Implementation**:
-- Exponential backoff: 1s, 2s, 4s, 8s, 16s, 32s (max 60s)
-- Up to 6 attempts per cycle
-- Resets on successful reconnect
-- Settings toggle to enable/disable
-
-**User Feedback**:
-- Status messages during reconnection attempts
-- Toast notifications on success/failure
-- Saved to settings.json
-
-## Usage Examples
-
-### Using Hotkeys
-1. Start the application
-2. Select a camera
-3. Press `+` to zoom in, `-` to zoom out
-4. Use arrow keys to pan around
-5. Press `Esc` to reset view
-6. Press `R` to refresh camera list
-
-### Managing Recordings
-1. Go to "Tallenteet" tab
-2. Existing recordings load automatically
-3. Select one or more recordings (Ctrl+Click for multi-select)
-4. Click "Poista valittu" to delete selected
-5. Or "Poista kaikki" to clear all
-
-### Configuring Autoreconnect
-1. Go to "Asetukset" tab
-2. Toggle "Kameran automaattinen uudelleenyhdistäminen"
-3. Click "Tallenna asetukset" to persist
-4. Camera will now auto-reconnect on failure
+### Zoom/Pan Not Working
+- Ensure a camera is active and displaying video
+- Keyboard arrows work on the active camera view
+- Reset zoom if the view seems stuck
 
 ## Technical Notes
 
-### Thread Safety
-- Camera refresh uses daemon threads
-- UI updates via `root.after(0, callback)`
-- Recording state never modified by settings
+### Recording Safety
+- All major operations are now safe during active recording
+- Refresh cameras won't stop recording if cameras are found
+- Settings save doesn't restart camera streams
+- Frame processing errors are handled per-camera without crashing
 
-### Performance
-- Background operations don't block UI
-- File watcher runs every 5 seconds (configurable)
-- Zoom/pan calculations optimized with numpy
-
-### Testing
-- 9 unit tests (all passing)
-- Tests cover zoom, pan, humanize utilities
-- UI tests skipped (require display)
-
-## Future Enhancements
-
-Potential improvements for future versions:
-- Mouse wheel zoom
-- Click-and-drag panning
-- Customizable hotkeys in Settings
-- Manual recording start/stop
-- Configurable file watcher interval
-- Recording metadata editing
+### Error Logging
+All errors are logged with details for troubleshooting. Check application logs if you encounter issues.

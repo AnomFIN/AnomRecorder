@@ -13,18 +13,34 @@ def test_zoom_state_bounds():
     assert state.factor == 1.0
     # Can now zoom out below 1.0
     state.zoom_out()
-    assert state.factor == 0.75
+    assert state.factor == 0.75  # Now supports zoom out below 1.0
     state.zoom_out()
     assert state.factor == 0.5  # Min factor
     state.zoom_out()
-    assert state.factor == 0.5  # Stays at min
+    assert state.factor == 0.5  # Clamped at min
     for _ in range(20):
         state.zoom_in()
     assert state.factor == state.max_factor
     state.reset()
     assert state.factor == 1.0
-    assert state.pan_x == 0.0
-    assert state.pan_y == 0.0
+    assert state.pan_x == 0.5
+    assert state.pan_y == 0.5
+
+
+def test_zoom_state_pan():
+    state = ZoomState()
+    state.pan(0.1, 0.0)
+    assert abs(state.pan_x - 0.6) < 0.001
+    state.pan(-0.2, 0.1)
+    assert abs(state.pan_x - 0.4) < 0.001
+    assert abs(state.pan_y - 0.6) < 0.001
+    # Test bounds
+    state.pan(1.0, 1.0)
+    assert abs(state.pan_x - 1.0) < 0.001
+    assert abs(state.pan_y - 1.0) < 0.001
+    state.pan(-2.0, -2.0)
+    assert abs(state.pan_x - 0.0) < 0.001
+    assert abs(state.pan_y - 0.0) < 0.001
 
 
 def test_crop_zoom_center():
@@ -34,34 +50,20 @@ def test_crop_zoom_center():
     assert zoomed.shape[1] == 5
 
 
-def test_zoom_out_adds_padding():
-    frame = np.ones((100, 100, 3), dtype="uint8") * 255
+def test_crop_zoom_out():
+    frame = np.ones((10, 10, 3), dtype="uint8") * 255
     zoomed = crop_zoom(frame, 0.5)
-    # Zoom out should add padding, making frame larger
-    assert zoomed.shape[0] == 200
-    assert zoomed.shape[1] == 200
+    # Zoom out creates a larger frame with black border
+    assert zoomed.shape[0] == 20
+    assert zoomed.shape[1] == 20
+    # Check that original is centered
+    assert zoomed[5, 5, 0] == 255
+    assert zoomed[0, 0, 0] == 0  # Border is black
 
 
-def test_pan_constrains_bounds():
-    state = ZoomState()
-    state.pan(2.0, 2.0)  # Try to pan beyond bounds
-    assert state.pan_x == 1.0  # Constrained to max
-    assert state.pan_y == 1.0
-    state.pan(-3.0, -3.0)
-    assert state.pan_x == -1.0  # Constrained to min
-    assert state.pan_y == -1.0
-
-
-def test_pan_directions():
-    state = ZoomState()
-    state.pan_right()
-    assert state.pan_x > 0
-    state.pan_left()
-    state.pan_left()
-    assert state.pan_x < 0
-    state.reset()
-    state.pan_down()
-    assert state.pan_y > 0
-    state.pan_up()
-    state.pan_up()
-    assert state.pan_y < 0
+def test_crop_zoom_pan():
+    frame = np.arange(400).reshape(20, 20).astype("uint8")
+    # Zoom in with pan to top-left
+    zoomed = crop_zoom(np.dstack([frame] * 3), 2.0, pan_x=0.25, pan_y=0.25)
+    assert zoomed.shape[0] == 10
+    assert zoomed.shape[1] == 10
