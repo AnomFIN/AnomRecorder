@@ -25,6 +25,9 @@ import numpy as np
 import tkinter as tk
 from PIL import Image, ImageTk
 from tkinter import filedialog, messagebox, simpledialog, ttk
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
+import send2trash
 
 from ..core.detection import PersonDetector
 from ..core.humanize import format_bytes, format_percentage, format_timestamp
@@ -44,6 +47,20 @@ UPDATE_INTERVAL_MS = 33
 PLAYBACK_BASE_INTERVAL = 1.0 / 30.0
 
 
+class RecordingsWatcher(FileSystemEventHandler):
+    """Watches recordings directory for changes."""
+    def __init__(self, callback):
+        self.callback = callback
+        
+    def on_created(self, event):
+        if not event.is_directory and event.src_path.endswith('.avi'):
+            self.callback()
+    
+    def on_deleted(self, event):
+        if not event.is_directory:
+            self.callback()
+
+
 @dataclass
 class EventItem:
     id: int
@@ -60,6 +77,12 @@ class CameraApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("AnomRecorder — AnomFIN")
+        
+        # Make window resizable with constraints
+        self.root.minsize(1024, 600)
+        self.root.maxsize(2560, 1440)
+        self.root.geometry("1280x800")
+        
         apply_dark_theme(root)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
@@ -722,7 +745,10 @@ class CameraApp:
             "autoreconnect": self.reconnect_states[0].enabled,
         }
         try:
-            Path(self._settings_path()).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            # Atomic write: write to temp file then rename
+            temp_path = Path(self._settings_path()).with_suffix('.tmp')
+            temp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            temp_path.replace(self._settings_path())
         except Exception:
             self.logger.warning("settings-save-failed", exc_info=True)
     
@@ -1082,6 +1108,185 @@ class CameraApp:
 
     def select_recordings_view(self) -> None:
         self.notebook.select(self.events_tab)
+    
+    def _setup_filesystem_watcher(self) -> None:
+        """Setup filesystem watcher for recordings directory."""
+        try:
+            event_handler = RecordingsWatcher(lambda: self.root.after(0, self._load_existing_recordings))
+            self.fs_observer = Observer()
+            self.fs_observer.schedule(event_handler, str(self.record_dir), recursive=False)
+            self.fs_observer.start()
+            self.logger.info("filesystem-watcher-started")
+        except Exception as exc:
+            self.logger.warning("filesystem-watcher-failed", exc_info=exc)
+    
+    def _load_existing_recordings(self) -> None:
+        """Load existing recordings from disk."""
+        try:
+            existing_files = sorted(self.record_dir.glob("recording_*.avi"), key=lambda f: f.stat().st_mtime)
+            # Only add new files that aren't already in events
+            existing_paths = {event.path for event in self.events}
+            for file_path in existing_files:
+                path_str = str(file_path)
+                if path_str not in existing_paths:
+                    self.event_counter += 1
+                    stat = file_path.stat()
+                    event = EventItem(
+                        id=self.event_counter,
+                        name=file_path.name,
+                        path=path_str,
+                        start=datetime.fromtimestamp(stat.st_mtime),
+                        end=datetime.fromtimestamp(stat.st_mtime),
+                        duration=0.0,
+                        persons_max=0,
+                    )
+                    self.events.append(event)
+            self.refresh_events_view()
+        except Exception as exc:
+            self.logger.warning("load-recordings-failed", exc_info=exc)
+    
+    def _delete_selected_recordings(self) -> None:
+        """Delete selected recordings, moving to trash when possible."""
+        selection = self.events_view.selection()
+        if not selection:
+            messagebox.showinfo("Huom", "Valitse ensin tallenteet.")
+            return
+        
+        count = len(selection)
+        if not messagebox.askyesno("Vahvista", f"Poistetaanko {count} tallenne(tta) roskakoriin?"):
+            return
+        
+        deleted = []
+        for path in selection:
+            try:
+                # Try to move to trash first
+                send2trash.send2trash(path)
+                deleted.append(path)
+                self.logger.info("recording-deleted", extra={"path": path})
+            except Exception as exc:
+                self.logger.warning("trash-failed", extra={"path": path}, exc_info=exc)
+                # Fallback: ask for permanent deletion
+                if messagebox.askyesno("Virhe", f"Roskakoriin siirto epäonnistui.\nPoista pysyvästi: {Path(path).name}?"):
+                    try:
+                        Path(path).unlink()
+                        deleted.append(path)
+                    except Exception as exc2:
+                        self.logger.exception("delete-failed", extra={"path": path}, exc_info=exc2)
+                        messagebox.showerror("Virhe", f"Poisto epäonnistui: {exc2}")
+        
+        # Remove from events list
+        self.events = [e for e in self.events if e.path not in deleted]
+        self.refresh_events_view()
+        self._update_usage_label()
+        
+        if deleted:
+            messagebox.showinfo("Valmis", f"{len(deleted)} tallenne(tta) poistettu.")
+    
+    def _update_recording_indicator(self) -> None:
+        """Update the recording indicator based on current state."""
+        is_any_recording = any(self.is_recording)
+        if is_any_recording:
+            self.recording_indicator_var.set("● Tallentaa")
+            self.recording_indicator_label.configure(foreground="#ff0000")
+        else:
+            self.recording_indicator_var.set("● Ei tallenna")
+            self.recording_indicator_label.configure(foreground="#00ff00")
+    
+    def _pan(self, slot: int, dx: int, dy: int) -> None:
+        """Pan the view for the given camera slot."""
+        self.pan_x[slot] += dx
+        self.pan_y[slot] += dy
+        # Panning will be applied during frame rendering
+    
+    def _setup_hotkeys(self) -> None:
+        """Setup keyboard shortcuts."""
+        self.root.bind("<space>", lambda e: self._toggle_recording())
+        self.root.bind("r", lambda e: self.refresh_cameras())
+        self.root.bind("R", lambda e: self.refresh_cameras())
+        self.root.bind("<plus>", lambda e: self._zoom_active_camera("in"))
+        self.root.bind("<minus>", lambda e: self._zoom_active_camera("out"))
+        self.root.bind("<Escape>", lambda e: self.on_close())
+        self.root.bind("<Up>", lambda e: self._pan_active_camera(0, -20))
+        self.root.bind("<Down>", lambda e: self._pan_active_camera(0, 20))
+        self.root.bind("<Left>", lambda e: self._pan_active_camera(-20, 0))
+        self.root.bind("<Right>", lambda e: self._pan_active_camera(20, 0))
+    
+    def _toggle_recording(self) -> None:
+        """Toggle recording state (placeholder - motion detection controls actual recording)."""
+        # In this app, recording is controlled by motion detection, not manual toggle
+        # This is a placeholder for future manual recording control
+        pass
+    
+    def _zoom_active_camera(self, direction: str) -> None:
+        """Zoom the active camera."""
+        slot = 0 if self.indices[0] is not None else (1 if self.indices[1] is not None else None)
+        if slot is not None:
+            self._update_zoom(slot, direction)
+    
+    def _pan_active_camera(self, dx: int, dy: int) -> None:
+        """Pan the active camera."""
+        slot = 0 if self.indices[0] is not None else (1 if self.indices[1] is not None else None)
+        if slot is not None:
+            self._pan(slot, dx, dy)
+    
+    def _save_settings_safe(self) -> None:
+        """Save settings without stopping recording and apply immediately."""
+        try:
+            self._save_settings()
+            messagebox.showinfo("Tallennettu", "Asetukset tallennettu ja otettu käyttöön.")
+        except Exception as exc:
+            self.logger.exception("settings-save-failed", exc_info=exc)
+            messagebox.showerror("Virhe", f"Asetusten tallennus epäonnistui: {exc}")
+    
+    def _schedule_reconnect(self, slot: int) -> None:
+        """Schedule a reconnection attempt with exponential backoff."""
+        if not self.enable_autoreconnect.get():
+            return
+        
+        delay_ms = int(self.reconnect_delay[slot] * 1000)
+        self.reconnect_delay[slot] = min(self.reconnect_delay[slot] * 2, 30.0)  # Max 30 seconds
+        self.reconnect_attempts[slot] += 1
+        
+        self.logger.info(f"scheduling-reconnect", extra={
+            "slot": slot,
+            "attempt": self.reconnect_attempts[slot],
+            "delay_ms": delay_ms
+        })
+        
+        self.root.after(delay_ms, lambda: self._try_autoreconnect(slot))
+    
+    def _try_autoreconnect(self, slot: int) -> None:
+        """Try to reconnect camera."""
+        if not self.enable_autoreconnect.get() or self.caps[slot] is not None:
+            return
+        
+        saved_index = self.indices[slot]
+        if saved_index is None:
+            return
+        
+        try:
+            cap = cv2.VideoCapture(saved_index, cv2.CAP_DSHOW)
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+            
+            if cap.isOpened():
+                # Test read
+                ok, _ = cap.read()
+                if ok:
+                    self.caps[slot] = cap
+                    self.reconnect_attempts[slot] = 0
+                    self.reconnect_delay[slot] = 1.0
+                    self.status_var.set(f"Kamera {slot + 1} yhdistetty uudelleen")
+                    self.logger.info(f"camera-{slot}-reconnected")
+                    return
+            
+            cap.release()
+        except Exception as exc:
+            self.logger.warning(f"reconnect-failed-slot-{slot}", exc_info=exc)
+        
+        # Schedule next attempt if still disconnected
+        if self.reconnect_attempts[slot] < 10:  # Max 10 attempts
+            self._schedule_reconnect(slot)
 
     def _is_recording(self) -> bool:
         """Check if any recorder is currently recording."""
@@ -1098,6 +1303,15 @@ class CameraApp:
 
     def on_close(self) -> None:
         self.logger.info("shutdown")
+        
+        # Stop filesystem watcher
+        if self.fs_observer is not None:
+            try:
+                self.fs_observer.stop()
+                self.fs_observer.join(timeout=1.0)
+            except Exception:
+                pass
+        
         for cap in self.caps:
             if cap is not None:
                 try:

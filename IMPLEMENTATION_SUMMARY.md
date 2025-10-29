@@ -1,3 +1,34 @@
+platform linux -- Python 3.12.3, pytest-8.4.2, pluggy-1.6.0 -- /usr/bin/python
+cachedir: .pytest_cache
+rootdir: /home/runner/work/AnomRecorder/AnomRecorder
+collected 12 items                                                                                                     
+
+tests/test_app_integration.py::test_settings_save_atomic PASSED                                                  [  8%]
+tests/test_app_integration.py::test_audio_settings_persistence PASSED                                            [ 16%]
+tests/test_app_integration.py::test_recordings_list_from_directory PASSED                                        [ 25%]
+tests/test_app_integration.py::test_zoom_factor_range PASSED                                                     [ 33%]
+tests/test_app_integration.py::test_pan_offset_bounds PASSED                                                     [ 41%]
+tests/test_humanize.py::test_format_bytes_scaling PASSED                                                         [ 50%]
+tests/test_humanize.py::test_format_bytes_negative PASSED                                                        [ 58%]
+tests/test_humanize.py::test_format_percentage PASSED                                                            [ 66%]
+tests/test_humanize.py::test_format_timestamp PASSED                                                             [ 75%]
+tests/test_zoom.py::test_zoom_state_bounds PASSED                                                                [ 83%]
+tests/test_zoom.py::test_crop_zoom_center PASSED                                                                 [ 91%]
+tests/test_zoom.py::test_crop_zoom_out PASSED                                                                    [100%]
+
+```
+
+## Screenshots
+
+(To be added when application is run with display server)
+
+Due to headless test environment, screenshots cannot be captured. However, the following UI elements have been added:
+
+1. **Recording Indicator**: Red "● Tallentaa" / Green "● Ei tallenna" in Live tab top bar
+2. **Pan Controls**: Arrow buttons (↑ ↓ ← →) in zoom control section
+3. **Audio Settings**: Checkbox and dropdown in Asetukset tab
+4. **Autoreconnect Toggle**: Checkbox in Asetukset tab
+5. **Delete Button**: "Poista valitut" in Tallenteet tab
 # Implementation Summary
 
 ## Overview
@@ -90,7 +121,6 @@ This implementation successfully completes all 10 requested features for the Ano
 ## Test Results
 
 ```
-================================================= test session starts ==================================================
 collected 15 items                                                                                                     
 
 tests/test_app_features.py::test_zoom_out_support PASSED                                                         [  6%]
@@ -109,7 +139,6 @@ tests/test_humanize.py::test_format_timestamp PASSED                            
 tests/test_zoom.py::test_zoom_state_bounds PASSED                                                                [ 93%]
 tests/test_zoom.py::test_crop_zoom_center PASSED                                                                 [100%]
 
-================================================== 15 passed in 0.17s ==================================================
 ```
 
 ## Code Quality
