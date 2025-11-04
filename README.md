@@ -1,9 +1,11 @@
 # AnomRecorder
 
-AnomRecorder tuo AnomFINin kyberhenkisen tumman käyttöliittymän USB-kameroille. Sovellus on offline-tilassa toimiva valvontaratkaisu, jossa tallennus, katselu ja asetukset löytyvät yhdestä futuristisesta näkymästä.
+AnomRecorder tuo AnomFINin kyberhenkisen tumman käyttöliittymän USB- ja IP-kameroille. Sovellus on offline-tilassa toimiva valvontaratkaisu, jossa tallennus, katselu ja asetukset löytyvät yhdestä futuristisesta näkymästä.
 
 ## Pääominaisuudet
 - **Dark mode -teema** anomfin-website -sivuston tyyliin: tumma paletti, minimalistiset aksentit.
+- **USB- ja IP-kameratuki**: Liitä USB-kameroita tai WiFi/IP-kameroita (RTSP, HTTP/MJPEG).
+- **Automaattinen kamerahaku**: Skannaa WiFi-verkko automaattisesti yhteensopivien IP-kameroiden löytämiseksi.
 - **Zoom-ohjaimet** kummallekin kameralle (+ / − / reset).
 - **Jatkuva tallennus**: tallennus ei keskeydy vaikka selaat tallenteita.
 - **Playback-kontrollit**: play, pause, stop sekä 0.5x / 1x / 2x -nopeudet.
@@ -56,7 +58,8 @@ pytest
 
 ## Runbook & vianetsintä
 - `recordings/`-hakemisto luodaan automaattisesti käynnistyksessä.
-- Jos kamera ei löydy, paina **Päivitä** ja tarkista että laite näkyy Windowsin Laitehallinnassa.
+- Jos USB-kamera ei löydy, paina **Päivitä** ja tarkista että laite näkyy Windowsin Laitehallinnassa.
+- **IP-kameran lisäys**: Klikkaa **+ IP-kamera** ja seuraa ohjeita. Katso yksityiskohtaiset ohjeet tiedostosta [README_IP_CAMERA.md](README_IP_CAMERA.md).
 - Tallenteiden toisto käyttää OpenCV:tä; jos playback ei käynnisty, varmista että `opencv-video`-koodekki on saatavilla.
 - Lokit tulostuvat konsoliin (INFO-taso). PyInstaller-versiossa lokit ohjautuvat järjestelmän logiin.
 
@@ -64,8 +67,8 @@ pytest
 - Testit kattavat vain puhtaat apurit; OpenCV/Tkinter -rajapintojen instrumentointi vaatii laiteympäristön.
 - Playback-ikkuna ei tue scrubbausta tai ääntä (vain video + nopeus).
 - Linuxissa kameranhakeminen käyttää DirectShow-lippua; tarvittaessa päivitä `cv2.VideoCapture` -parametrit.
+- IP-kameroiden automaattinen skannaus voi kestää useita minuutteja verkosta riippuen.
 
 ## Seuraavat iteroinnit
 - Lisää scrubber ja frame-by-frame -ohjaimet tallenteiden katseluun.
-- Abstrahoi kamerainputit palveluksi, joka mahdollistaa IP-kameroiden tuen.
 - Toteuta automaattinen terveysraportointi (levytila, kamera offline) esim. sähköposti-ilmoituksin.
