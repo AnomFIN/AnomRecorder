@@ -1097,7 +1097,14 @@ class CameraApp:
             self.logger.warning("settings-save-failed", exc_info=True)
     
     def _serialize_ip_cameras(self) -> List[Dict[str, Any]]:
-        """Serialize IP cameras for JSON storage."""
+        """Serialize IP cameras for JSON storage.
+        
+        Security note: Passwords are stored in plain text in the local config file.
+        This is acceptable for a local desktop application where:
+        - Config files are stored locally per user
+        - The alternative would require complex key management
+        - Users should use application-specific camera passwords, not reuse important passwords
+        """
         result = []
         for cam in self.ip_cameras:
             result.append({
@@ -1107,7 +1114,7 @@ class CameraApp:
                 "ip": cam.ip,
                 "port": cam.port,
                 "username": cam.username,
-                "password": cam.password
+                "password": cam.password  # Stored in plain text for local config
             })
         return result
     

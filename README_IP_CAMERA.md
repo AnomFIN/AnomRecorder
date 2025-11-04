@@ -122,7 +122,20 @@ Jos kohtaat ongelmia:
 
 ## Tietoturvavinkit
 
-1. **Älä jaa kirjautumistietoja**: Kameran salasanat tallennetaan paikallisesti
-2. **Käytä vahvoja salasanoja**: Vaihda kameran oletussalasana
-3. **Paikallinen verkko**: Käytä kameroita vain luotetussa verkossa
-4. **Päivitä kameran laiteohjelmisto**: Pidä kamerat ajan tasalla tietoturvan vuoksi
+⚠️ **TÄRKEÄÄ - SALASANOJEN TALLENNUS**
+
+IP-kameran salasanat tallennetaan **selkokielisena** paikalliseen `config.json`-tiedostoon. Tämä on tarpeen, jotta sovellus voi yhdistää kameroihin automaattisesti. **ÄLÄ** käytä samoja salasanoja, joita käytät muissa palveluissa.
+
+**Suositukset:**
+
+1. **Käytä erillisiä salasanoja**: Luo kameralle oma salasana, jota et käytä missään muualla
+2. **Vaihda oletussalasanat**: Vaihda kameran tehdasasetuksissa olevat salasanat (admin/admin, admin/password)
+3. **Paikallinen verkko**: Käytä kameroita vain luotetussa, yksityisessä verkossa
+4. **Rajoita pääsy**: Varmista, että tietokoneesi ja config.json-tiedosto eivät ole jaettu muiden kanssa
+5. **Päivitä laiteohjelmisto**: Pidä kamerat ajan tasalla tietoturvan vuoksi
+6. **Ei julkisiin verkkoihin**: Älä käytä IP-kameroita julkisissa WiFi-verkoissa
+
+Jos haluat poistaa tallennetut salasanat, voit:
+- Poistaa IP-kameran käyttöliittymästä
+- Muokata config.json-tiedostoa manuaalisesti
+- Poistaa config.json-tiedoston kokonaan (poistaa kaikki asetukset)

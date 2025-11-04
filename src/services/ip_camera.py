@@ -78,10 +78,12 @@ def test_rtsp_connection(ip: str, port: int, username: str = "", password: str =
     for test_path in paths_to_try:
         if username and password:
             url = f"rtsp://{username}:{password}@{ip}:{port}{test_path}"
+            log_url = f"rtsp://{username}:***@{ip}:{port}{test_path}"
         else:
             url = f"rtsp://{ip}:{port}{test_path}"
+            log_url = url
             
-        LOGGER.debug(f"Testing RTSP: {url}")
+        LOGGER.debug(f"Testing RTSP: {log_url}")
         
         try:
             cap = cv2.VideoCapture(url)
