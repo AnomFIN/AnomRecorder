@@ -143,7 +143,8 @@ def test_http_mjpeg(ip: str, port: int, username: str = "", password: str = "",
                 
             response = requests.get(url, auth=auth, timeout=CONNECTION_TIMEOUT, stream=True)
             
-            if response.status_code == 200:
+            # Accept both 200 OK and 206 Partial Content (common for IP camera streaming)
+            if response.status_code in (200, 206):
                 # Test if OpenCV can open it
                 if username and password:
                     opencv_url = f"http://{username}:{password}@{ip}:{port}{test_path}"

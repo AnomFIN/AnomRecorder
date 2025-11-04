@@ -9,6 +9,7 @@ Why this design:
 from __future__ import annotations
 
 import logging
+import threading
 import tkinter as tk
 from tkinter import ttk, messagebox
 from typing import Optional, Callable
@@ -250,7 +251,6 @@ class IPCameraDialog:
             # Update UI from main thread
             self.dialog.after(0, lambda: self._handle_manual_test_result(camera))
             
-        import threading
         threading.Thread(target=test_worker, daemon=True).start()
         
     def _handle_manual_test_result(self, camera: Optional[IPCamera]) -> None:

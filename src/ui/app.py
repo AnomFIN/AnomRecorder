@@ -18,7 +18,7 @@ import threading
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import cv2
 import numpy as np
@@ -118,7 +118,7 @@ class CameraApp:
         
         self.caps: List[Optional[cv2.VideoCapture]] = [None, None]
         self.indices: List[Optional[int]] = [None, None]
-        self.camera_sources: List[Optional[str | int]] = [None, None]  # Store either USB index or IP camera URL
+        self.camera_sources: List[Optional[Union[str, int]]] = [None, None]  # Store either USB index or IP camera URL
         self.ip_cameras: List[IPCamera] = []  # Store configured IP cameras
         self.frame_imgs: List[Optional[ImageTk.PhotoImage]] = [None, None]
         self.last_frames_bgr: List[Optional[np.ndarray]] = [None, None]
@@ -540,7 +540,7 @@ class CameraApp:
         _, source = self.camera_list[selection]
         self.start_camera(slot, source)
 
-    def start_camera(self, slot: int, source: int | IPCamera) -> None:
+    def start_camera(self, slot: int, source: Union[int, IPCamera]) -> None:
         """Start a camera from either USB index or IP camera object."""
         # Check if already started with same source
         if self.camera_sources[slot] == source and self.caps[slot] is not None:

@@ -80,7 +80,7 @@ def test_camera_scanner_initialization():
     """Test CameraScanner initialization."""
     scanner = CameraScanner()
     
-    assert scanner.is_scanning == False
+    assert not scanner.is_scanning
     assert scanner.found_cameras == []
     assert scanner.scan_thread is None
 
@@ -92,7 +92,7 @@ def test_camera_scanner_stop():
     
     scanner.stop_scan()
     
-    assert scanner.is_scanning == False
+    assert not scanner.is_scanning
 
 
 def test_camera_scanner_get_found_cameras():
