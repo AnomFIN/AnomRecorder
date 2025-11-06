@@ -18,7 +18,7 @@ import threading
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import cv2
 import numpy as np
@@ -32,8 +32,10 @@ import send2trash
 from ..core.detection import PersonDetector
 from ..core.humanize import format_bytes, format_percentage, format_timestamp
 from ..services.camera import list_cameras
+from ..services.ip_camera import IPCamera
 from ..services.recording import RecorderConfig, RollingRecorder
 from .theme import PALETTE, apply_dark_theme
+from .ip_camera_dialog import show_ip_camera_dialog
 from ..utils.resources import find_resource
 from ..utils.zoom import ZoomState, crop_zoom
 from ..utils.hotkeys import HotkeyConfig
@@ -116,9 +118,11 @@ class CameraApp:
         
         self.caps: List[Optional[cv2.VideoCapture]] = [None, None]
         self.indices: List[Optional[int]] = [None, None]
+        self.camera_sources: List[Optional[Union[str, int]]] = [None, None]  # Store either USB index or IP camera URL
+        self.ip_cameras: List[IPCamera] = []  # Store configured IP cameras
         self.frame_imgs: List[Optional[ImageTk.PhotoImage]] = [None, None]
         self.last_frames_bgr: List[Optional[np.ndarray]] = [None, None]
-        self.camera_list: List[Any] = []
+        self.camera_list: List[Any] = []  # List of (name, source) tuples where source is USB index or IPCamera object
         
         # Reconnect states for each camera
         self.reconnect_states = [ReconnectState(), ReconnectState()]
@@ -226,6 +230,7 @@ class CameraApp:
         ttk.Radiobutton(top_bar, text="Tallenteet", variable=self.num_cams, value=3, command=self.select_recordings_view).pack(side=tk.LEFT)
 
         ttk.Button(top_bar, text="Päivitä", command=self.refresh_cameras_async).pack(side=tk.LEFT, padx=(16, 0))
+        ttk.Button(top_bar, text="+ IP-kamera", command=self.add_ip_camera).pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(top_bar, text="Kuvakaappaus", command=self.save_snapshot).pack(side=tk.LEFT, padx=(8, 0))
         
         # Recording indicator
@@ -455,9 +460,20 @@ class CameraApp:
         self.status_var.set("Päivitetään kameralistaa...")
     
     def _update_camera_list(self, cams: List[Any]) -> None:
-        """Update camera list in UI thread."""
-        self.camera_list = cams
-        labels = [name for name, _ in cams]
+        """Update camera list in UI thread, including IP cameras."""
+        # Combine USB cameras and IP cameras
+        combined_list = []
+        
+        # Add USB cameras
+        for name, idx in cams:
+            combined_list.append((name, idx))
+        
+        # Add IP cameras
+        for ip_cam in self.ip_cameras:
+            combined_list.append((ip_cam.name, ip_cam))
+        
+        self.camera_list = combined_list
+        labels = [name for name, _ in combined_list]
         self.camera_combo1["values"] = labels
         self.camera_combo2["values"] = labels
         if labels:
@@ -470,35 +486,38 @@ class CameraApp:
             self.status_var.set("Kamerat: " + ", ".join(labels))
             self._show_toast(f"Kamerat päivitetty: {len(labels)} löydetty", error=False)
         else:
-            self.status_var.set("Kameraa ei löydy. Kytke USB-kamera ja päivitä.")
+            self.status_var.set("Kameraa ei löydy. Kytke USB-kamera tai lisää IP-kamera.")
 
     def refresh_cameras(self) -> None:
         """Refresh camera list without stopping active cameras."""
         try:
             cams = list_cameras()
-            self.camera_list = cams
-            labels = [name for name, _ in cams]
-            self.camera_combo1["values"] = labels
-            self.camera_combo2["values"] = labels
-            
-            if labels:
-                # Only initialize cameras if not already selected
-                if self.camera_combo1.current() == -1 and len(labels) > 0:
-                    self.camera_combo1.current(0)
-                    self.on_select_camera(0)
-                if self.num_cams.get() >= 2 and self.camera_combo2.current() == -1 and len(labels) > 1:
-                    self.camera_combo2.current(1)
-                    self.on_select_camera(1)
-                self.status_var.set("Kamerat: " + ", ".join(labels))
-            else:
-                self.status_var.set("Kameraa ei löydy. Kytke USB-kamera ja päivitä.")
-                # Only stop cameras if no cameras found and not recording
-                if not self._is_recording():
-                    self.stop_camera(0)
-                    self.stop_camera(1)
+            # Use _update_camera_list to properly merge USB and IP cameras
+            self._update_camera_list(cams)
         except Exception as e:
             self.logger.error("refresh-cameras-failed", exc_info=True)
             messagebox.showerror("Virhe", f"Kameroiden päivitys epäonnistui: {str(e)}")
+    
+    def add_ip_camera(self) -> None:
+        """Open dialog to add an IP/WiFi camera."""
+        try:
+            camera = show_ip_camera_dialog(self.root)
+            if camera:
+                # Add to IP cameras list
+                self.ip_cameras.append(camera)
+                self.logger.info(f"Added IP camera: {camera.name} at {camera.ip}")
+                
+                # Refresh camera list to include new IP camera
+                cams = list_cameras()
+                self._update_camera_list(cams)
+                
+                # Save IP cameras to config
+                self._save_ip_cameras()
+                
+                self._show_toast(f"IP-kamera lisätty: {camera.name}", error=False)
+        except Exception as e:
+            self.logger.error("add-ip-camera-failed", exc_info=True)
+            messagebox.showerror("Virhe", f"IP-kameran lisäys epäonnistui: {str(e)}")
 
     def update_layout(self) -> None:
         if self.num_cams.get() == 1:
@@ -518,24 +537,43 @@ class CameraApp:
         if selection == -1 or selection >= len(self.camera_list):
             self.stop_camera(slot)
             return
-        _, index = self.camera_list[selection]
-        self.start_camera(slot, index)
+        _, source = self.camera_list[selection]
+        self.start_camera(slot, source)
 
-    def start_camera(self, slot: int, index: int) -> None:
-        if self.indices[slot] == index and self.caps[slot] is not None:
+    def start_camera(self, slot: int, source: Union[int, IPCamera]) -> None:
+        """Start a camera from either USB index or IP camera object."""
+        # Check if already started with same source
+        if self.camera_sources[slot] == source and self.caps[slot] is not None:
             return
         self.stop_camera(slot)
         try:
-            cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+            # Determine if source is USB index or IP camera
+            if isinstance(source, IPCamera):
+                # IP camera
+                url = source.get_opencv_url()
+                self.logger.info(f"Opening IP camera: {url}")
+                cap = cv2.VideoCapture(url)
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Reduce latency for IP cameras
+                self.camera_sources[slot] = source
+                self.indices[slot] = None
+            else:
+                # USB camera
+                cap = cv2.VideoCapture(source, cv2.CAP_DSHOW)
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+                self.camera_sources[slot] = source
+                self.indices[slot] = source
+                
             if not cap.isOpened():
                 self.status_var.set(f"Kamera {slot + 1}: avaaminen epäonnistui")
                 cap.release()
-                messagebox.showwarning("Kamera", f"Kamera {slot + 1} ei vastaa. Tarkista USB-liitäntä.")
+                if isinstance(source, IPCamera):
+                    messagebox.showwarning("Kamera", f"IP-kamera {slot + 1} ei vastaa. Tarkista verkkoasetukset.")
+                else:
+                    messagebox.showwarning("Kamera", f"Kamera {slot + 1} ei vastaa. Tarkista USB-liitäntä.")
                 return
+                
             self.caps[slot] = cap
-            self.indices[slot] = index
             self.status_var.set("Live-katselu käynnissä")
         except Exception as e:
             self.logger.error("start-camera-failed", exc_info=True)
@@ -1022,6 +1060,22 @@ class CameraApp:
             reconnect_enabled = data["autoreconnect"]
             for state in self.reconnect_states:
                 state.enabled = reconnect_enabled
+        # Load IP cameras
+        if "ip_cameras" in data:
+            for cam_data in data["ip_cameras"]:
+                try:
+                    camera = IPCamera(
+                        name=cam_data.get("name", ""),
+                        url=cam_data.get("url", ""),
+                        protocol=cam_data.get("protocol", "rtsp"),
+                        ip=cam_data.get("ip", ""),
+                        port=cam_data.get("port", 554),
+                        username=cam_data.get("username"),
+                        password=cam_data.get("password")
+                    )
+                    self.ip_cameras.append(camera)
+                except Exception as e:
+                    self.logger.warning(f"Failed to load IP camera: {e}")
 
     def _save_settings(self) -> None:
         """Internal save without user feedback."""
@@ -1032,6 +1086,7 @@ class CameraApp:
             "motion_threshold": float(self.motion_threshold.get()),
             "hotkeys": self.hotkeys.to_dict(),
             "autoreconnect": self.reconnect_states[0].enabled,
+            "ip_cameras": self._serialize_ip_cameras(),
         }
         try:
             # Atomic write: write to temp file then rename
@@ -1040,6 +1095,32 @@ class CameraApp:
             temp_path.replace(self._settings_path())
         except Exception:
             self.logger.warning("settings-save-failed", exc_info=True)
+    
+    def _serialize_ip_cameras(self) -> List[Dict[str, Any]]:
+        """Serialize IP cameras for JSON storage.
+        
+        Security note: Passwords are stored in plain text in the local config file.
+        This is acceptable for a local desktop application where:
+        - Config files are stored locally per user
+        - The alternative would require complex key management
+        - Users should use application-specific camera passwords, not reuse important passwords
+        """
+        result = []
+        for cam in self.ip_cameras:
+            result.append({
+                "name": cam.name,
+                "url": cam.url,
+                "protocol": cam.protocol,
+                "ip": cam.ip,
+                "port": cam.port,
+                "username": cam.username,
+                "password": cam.password  # Stored in plain text for local config
+            })
+        return result
+    
+    def _save_ip_cameras(self) -> None:
+        """Save IP cameras configuration."""
+        self._save_settings()
     
     def _save_settings_safely(self) -> None:
         """Save settings with user feedback, doesn't stop recording."""
