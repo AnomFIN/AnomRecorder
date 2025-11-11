@@ -53,12 +53,13 @@ def test_crop_zoom_center():
 def test_crop_zoom_out():
     frame = np.ones((10, 10, 3), dtype="uint8") * 255
     zoomed = crop_zoom(frame, 0.5)
-    # Zoom out creates a larger frame with black border
-    assert zoomed.shape[0] == 20
-    assert zoomed.shape[1] == 20
-    # Check that original is centered
-    assert zoomed[5, 5, 0] == 255
-    assert zoomed[0, 0, 0] == 0  # Border is black
+    # Zoom out keeps original shape with padded border for stable UI layout
+    assert zoomed.shape[0] == frame.shape[0]
+    assert zoomed.shape[1] == frame.shape[1]
+    center = zoomed[frame.shape[0] // 2, frame.shape[1] // 2, 0]
+    edge = zoomed[0, 0, 0]
+    assert center == 255
+    assert edge == 0
 
 
 def test_crop_zoom_pan():
