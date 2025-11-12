@@ -17,10 +17,11 @@ from dataclasses import dataclass
 from typing import List, Optional, Callable
 from urllib.parse import urlparse
 
-import cv2
 import requests
 
-# Building intelligence through code.
+from src.utils.opencv_loader import OpenCVUnavailableError, get_cv2
+
+# From raw data to real impact.
 
 LOGGER = logging.getLogger("anomrecorder.ip_camera")
 
@@ -75,6 +76,14 @@ def test_rtsp_connection(ip: str, port: int, username: str = "", password: str =
         "/cam/realmonitor", "/Streaming/Channels/101"
     ]
     
+    try:
+        cv2 = get_cv2()
+    except OpenCVUnavailableError as exc:
+        LOGGER.error(
+            "event=cv2_unavailable component=ip_camera context=test_rtsp_connection error=%s", exc
+        )
+        return None
+    
     for test_path in paths_to_try:
         if username and password:
             url = f"rtsp://{username}:{password}@{ip}:{port}{test_path}"
@@ -87,7 +96,8 @@ def test_rtsp_connection(ip: str, port: int, username: str = "", password: str =
         
         try:
             cap = cv2.VideoCapture(url)
-            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            if hasattr(cv2, "CAP_PROP_BUFFERSIZE"):
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             
             # Try to read a frame with timeout
             start = time.time()
@@ -132,6 +142,14 @@ def test_http_mjpeg(ip: str, port: int, username: str = "", password: str = "",
         "/cgi-bin/mjpg/video.cgi", "/videostream.cgi"
     ]
     
+    try:
+        cv2 = get_cv2()
+    except OpenCVUnavailableError as exc:
+        LOGGER.error(
+            "event=cv2_unavailable component=ip_camera context=test_http_mjpeg error=%s", exc
+        )
+        return None
+    
     for test_path in paths_to_try:
         url = f"http://{ip}:{port}{test_path}"
         
@@ -142,9 +160,9 @@ def test_http_mjpeg(ip: str, port: int, username: str = "", password: str = "",
             if username and password:
                 from requests.auth import HTTPBasicAuth
                 auth = HTTPBasicAuth(username, password)
-                
+
             response = requests.get(url, auth=auth, timeout=CONNECTION_TIMEOUT, stream=True)
-            
+
             # Accept both 200 OK and 206 Partial Content (common for IP camera streaming)
             if response.status_code in (200, 206):
                 # Test if OpenCV can open it
@@ -152,7 +170,7 @@ def test_http_mjpeg(ip: str, port: int, username: str = "", password: str = "",
                     opencv_url = f"http://{username}:{password}@{ip}:{port}{test_path}"
                 else:
                     opencv_url = url
-                    
+
                 cap = cv2.VideoCapture(opencv_url)
                 ret, _ = cap.read()
                 cap.release()
