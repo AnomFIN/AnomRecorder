@@ -89,8 +89,8 @@ def _parse_pan(pan_x: PanInput, pan_y: float) -> Tuple[float, float, float, floa
 
     normalized_x = float(pan_x)
     normalized_y = float(pan_y)
-    normalized_x = float(np.clip(normalized_x, 0.0, 1.0))
-    normalized_y = float(np.clip(normalized_y, 0.0, 1.0))
+    normalized_x = np.clip(normalized_x, 0.0, 1.0)
+    normalized_y = np.clip(normalized_y, 0.0, 1.0)
     return normalized_x, normalized_y, 0.0, 0.0, False
 
 
