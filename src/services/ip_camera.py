@@ -76,6 +76,14 @@ def test_rtsp_connection(ip: str, port: int, username: str = "", password: str =
         "/cam/realmonitor", "/Streaming/Channels/101"
     ]
     
+    try:
+        cv2 = get_cv2()
+    except OpenCVUnavailableError as exc:
+        LOGGER.error(
+            "event=cv2_unavailable component=ip_camera context=test_rtsp_connection error=%s", exc
+        )
+        return None
+    
     for test_path in paths_to_try:
         if username and password:
             url = f"rtsp://{username}:{password}@{ip}:{port}{test_path}"
@@ -86,14 +94,6 @@ def test_rtsp_connection(ip: str, port: int, username: str = "", password: str =
             
         LOGGER.debug(f"Testing RTSP: {log_url}")
         
-        try:
-            cv2 = get_cv2()
-        except OpenCVUnavailableError as exc:
-            LOGGER.error(
-                "event=cv2_unavailable component=ip_camera context=test_rtsp_connection error=%s", exc
-            )
-            return None
-
         try:
             cap = cv2.VideoCapture(url)
             if hasattr(cv2, "CAP_PROP_BUFFERSIZE"):
@@ -142,6 +142,14 @@ def test_http_mjpeg(ip: str, port: int, username: str = "", password: str = "",
         "/cgi-bin/mjpg/video.cgi", "/videostream.cgi"
     ]
     
+    try:
+        cv2 = get_cv2()
+    except OpenCVUnavailableError as exc:
+        LOGGER.error(
+            "event=cv2_unavailable component=ip_camera context=test_http_mjpeg error=%s", exc
+        )
+        return None
+    
     for test_path in paths_to_try:
         url = f"http://{ip}:{port}{test_path}"
         
@@ -158,14 +166,6 @@ def test_http_mjpeg(ip: str, port: int, username: str = "", password: str = "",
             # Accept both 200 OK and 206 Partial Content (common for IP camera streaming)
             if response.status_code in (200, 206):
                 # Test if OpenCV can open it
-                try:
-                    cv2 = get_cv2()
-                except OpenCVUnavailableError as exc:
-                    LOGGER.error(
-                        "event=cv2_unavailable component=ip_camera context=test_http_mjpeg error=%s", exc
-                    )
-                    return None
-
                 if username and password:
                     opencv_url = f"http://{username}:{password}@{ip}:{port}{test_path}"
                 else:
