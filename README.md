@@ -5,6 +5,7 @@ AnomRecorder tuo AnomFINin kyberhenkisen tumman käyttöliittymän USB- ja IP-ka
 ## Pääominaisuudet
 - **Dark mode -teema** anomfin-website -sivuston tyyliin: tumma paletti, minimalistiset aksentit.
 - **USB- ja IP-kameratuki**: Liitä USB-kameroita tai WiFi/IP-kameroita (RTSP, HTTP/MJPEG).
+- **WiFi-kameratuki**: Tukee Ring, EUFY, Wyze, TP-Link ja muita RTSP-yhteensopivia kameroita.
 - **Automaattinen kamerahaku**: Skannaa WiFi-verkko automaattisesti yhteensopivien IP-kameroiden löytämiseksi.
 - **Zoom-ohjaimet** kummallekin kameralle (+ / − / reset).
 - **Jatkuva tallennus**: tallennus ei keskeydy vaikka selaat tallenteita.
