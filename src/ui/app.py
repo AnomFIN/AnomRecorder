@@ -386,7 +386,7 @@ class CameraApp:
         hotkeys_frame = ttk.Labelframe(outer, text="Pikanäppäimet")
         hotkeys_frame.pack(fill=tk.X, padx=8, pady=8)
         self.hotkeys_text = tk.Text(hotkeys_frame, height=7, width=50, wrap=tk.WORD, 
-                                     background=PALETTE["background"], foreground=PALETTE["foreground"])
+                                     background=PALETTE["bg"], foreground=PALETTE["text"])
         self.hotkeys_text.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
         self.hotkeys_text.insert("1.0", self.hotkeys.get_display_text())
         self.hotkeys_text.config(state=tk.DISABLED)

@@ -23,8 +23,6 @@ PALETTE = {
     "accent_active": "#5aa0ff",
     "success": "#4ade80",
     "error": "#ef4444",
-    "background": "#060910",
-    "foreground": "#d7e3ff",
 }
 
 
