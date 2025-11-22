@@ -21,6 +21,10 @@ PALETTE = {
     "muted": "#8fa0c2",
     "accent": "#3d7dff",
     "accent_active": "#5aa0ff",
+    "success": "#4ade80",
+    "error": "#ef4444",
+    "background": "#060910",
+    "foreground": "#d7e3ff",
 }
 
 
