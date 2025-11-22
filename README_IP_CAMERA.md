@@ -33,6 +33,71 @@ AnomRecorder tukee nyt IP/WiFi-kameroiden liittämistä USB-kameroiden lisäksi.
 6. Valitse löydetty kamera listasta
 7. Klikkaa **Lisää valittu kamera**
 
+## WiFi-kameroiden tuki (Ring, EUFY jne.)
+
+AnomRecorder tukee **Ring** ja **EUFY** WiFi-kameroita sekä muita suosittuja merkkejä RTSP/HTTP-protokollien kautta.
+
+### Ring-kamerat
+
+Ring-kamerat tukevat RTSP-protokollaa Ring Protect -tilauksella:
+
+1. **Aktivoi RTSP Ring-sovelluksessa**:
+   - Avaa Ring-sovellus älypuhelimessasi
+   - Valitse kamera → Laitteen asetukset → Video-asetukset
+   - Ota käyttöön "RTSP" (vaatii Ring Protect Plus -tilauksen)
+   - Sovellus näyttää RTSP URL:n, käyttäjänimen ja salasanan
+
+2. **Lisää kamera AnomRecorderiin**:
+   - Klikkaa **+ IP-kamera** → **Manuaalinen**
+   - Syötä Ring-sovelluksen antamat tiedot:
+     - IP-osoite tai hostname
+     - Portti: 554 (oletus)
+     - Protokolla: RTSP
+     - Käyttäjänimi ja salasana Ring-sovelluksesta
+     - Polku: sovelluksen näyttämä polku (esim. `/live`)
+
+**Huom**: Ring RTSP vaatii Ring Protect Plus -tilauksen ja ei ole saatavilla kaikille Ring-kameroille.
+
+### EUFY-kamerat
+
+EUFY-kamerat tukevat RTSP-yhteyttä paikallisessa verkossa:
+
+1. **Aktivoi RTSP EUFY-sovelluksessa**:
+   - Avaa EUFY Security -sovellus
+   - Valitse kamera → Asetukset ⚙️
+   - Siirry kohtaan "Streaming & Recording"
+   - Ota käyttöön "RTSP Stream"
+   - Sovellus näyttää RTSP URL:n muodossa: `rtsp://admin:password@192.168.x.x:8554/live0`
+
+2. **Lisää kamera AnomRecorderiin**:
+   - Klikkaa **+ IP-kamera** → **Manuaalinen**
+   - Syötä EUFY-sovelluksen antamat tiedot:
+     - IP-osoite: esim. 192.168.1.100
+     - Portti: 8554 (EUFY oletus)
+     - Protokolla: RTSP
+     - Käyttäjänimi: admin (oletus)
+     - Salasana: kameran salasana
+     - Polku: /live0 tai /live1 (riippuu kameravirrasta)
+
+### Muut WiFi-kamerat
+
+AnomRecorder tukee myös muita suosittuja WiFi-kameramerkkejä, jotka käyttävät RTSP/HTTP:
+
+- **Wyze Cam**: RTSP tuki v2/v3-malleissa (RTSP-firmware vaadittava)
+- **Nest Cam**: Rajoitettu RTSP-tuki (tietyt mallit)
+- **Arlo**: RTSP-tuki Arlo Pro/Ultra -malleissa
+- **TP-Link Tapo**: RTSP-tuki useimmissa malleissa
+- **Reolink**: Laaja RTSP-tuki kaikissa malleissa
+
+**Yleiset RTSP-polut eri valmistajille:**
+```
+Ring:      rtsp://username:password@ip:554/live
+EUFY:      rtsp://admin:password@ip:8554/live0
+Wyze:      rtsp://username:password@ip:554/live
+Tapo:      rtsp://username:password@ip:554/stream1
+Reolink:   rtsp://admin:password@ip:554/h264Preview_01_main
+```
+
 ## Älypuhelimen käyttö kamerana
 
 ### Android
@@ -84,6 +149,40 @@ http://192.168.1.100:8080/video
 5. **Palomuuriasetukset**:
    - Varmista, että Windows-palomuuri ei estä yhteyttä
    - Lisää AnomRecorder palomuurin poikkeuslistalle tarvittaessa
+
+### Ring-kameran erityisongelmat
+
+1. **RTSP ei ole saatavilla**:
+   - Tarkista, että sinulla on Ring Protect Plus -tilaus (perus Ring Protect ei riitä)
+   - Varmista, että kameramallisi tukee RTSP:tä (ei kaikki Ring-kamerat)
+   - Tarkista Ring-sovelluksesta, että RTSP-asetus on otettu käyttöön
+
+2. **Yhteys katkeaa usein**:
+   - Ring RTSP-striimaus saattaa aikakatkaista 10-15 minuutin jälkeen
+   - Tämä on Ring-palvelun rajoitus, ei AnomRecorderin ongelma
+   - AnomRecorder yrittää automaattisesti yhdistää uudelleen
+
+3. **Kirjautumistiedot eivät toimi**:
+   - Käytä täsmälleen Ring-sovelluksen näyttämiä kirjautumistietoja
+   - Älä käytä Ring-tilisi salasanaa, vaan sovelluksen luomaa RTSP-salasanaa
+   - Varmista, että salasanassa ei ole ylimääräisiä välilyöntejä
+
+### EUFY-kameran erityisongelmat
+
+1. **RTSP-asetus ei löydy**:
+   - Varmista, että kameran firmware on ajan tasalla
+   - Tarkista, että kameramallisi tukee RTSP:tä (useimmat EUFY-kamerat tukevat)
+   - Joissakin malleissa RTSP löytyy kohdasta "Advanced Settings"
+
+2. **"Admin" ei toimi käyttäjänimena**:
+   - Kokeile tyhjää käyttäjänimeä tai kameran alkuperäistä käyttäjänimeä
+   - Jotkin EUFY-mallit käyttävät kameran sarjanumeroa käyttäjänimenä
+   - Tarkista oikea käyttäjänimi EUFY-sovelluksen RTSP-asetuksista
+
+3. **Portti 8554 ei vastaa**:
+   - Tarkista EUFY-sovelluksesta oikea portti (voi vaihdella mallista riippuen)
+   - Kokeile portteja 554, 8554, ja 8555
+   - Varmista, että kamera on samassa WiFi-verkossa kuin tietokone
 
 ### Kuva pätkii tai viivästyy
 
