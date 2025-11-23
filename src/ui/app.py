@@ -24,9 +24,6 @@ import numpy as np
 import tkinter as tk
 from PIL import Image, ImageTk
 from tkinter import filedialog, messagebox, simpledialog, ttk
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
-import send2trash
 
 from ..core.detection import PersonDetector
 from ..core.humanize import format_bytes, format_percentage, format_timestamp
@@ -46,20 +43,6 @@ LOGGER = logging.getLogger("anomrecorder.ui")
 
 UPDATE_INTERVAL_MS = 33
 PLAYBACK_BASE_INTERVAL = 1.0 / 30.0
-
-
-class RecordingsWatcher(FileSystemEventHandler):
-    """Watches recordings directory for changes."""
-    def __init__(self, callback):
-        self.callback = callback
-        
-    def on_created(self, event):
-        if not event.is_directory and event.src_path.endswith('.avi'):
-            self.callback()
-    
-    def on_deleted(self, event):
-        if not event.is_directory:
-            self.callback()
 
 
 @dataclass
@@ -604,7 +587,7 @@ class CameraApp:
                     self._handle_new_event(new_event)
                 if finished_event:
                     self._handle_finished_event(finished_event)
-            except Exception as e:
+            except Exception:
                 self.logger.error("frame-update-failed", extra={"slot": slot}, exc_info=True)
                 # Don't show error dialog in update loop to avoid freezing UI or spamming user with multiple dialogs.
                 # Instead, just log the error and update status text for user visibility.
@@ -777,7 +760,7 @@ class CameraApp:
                         persons_max=0,
                     )
                     self.events.append(event)
-                except Exception as exc:
+                except Exception:
                     self.logger.warning("load-recording-failed", extra={"path": str(file_path)}, exc_info=True)
             
             if self.events:
@@ -822,7 +805,7 @@ class CameraApp:
                             persons_max=0,
                         )
                         self.events.append(event)
-                    except Exception as exc:
+                    except Exception:
                         self.logger.warning("watch-add-failed", extra={"path": str(file_path)}, exc_info=True)
                 
                 self.refresh_events_view()
@@ -913,7 +896,7 @@ class CameraApp:
                 if file_path.exists():
                     file_path.unlink()
                 deleted_count += 1
-            except Exception as exc:
+            except Exception:
                 self.logger.warning("delete-recording-failed", extra={"path": event.path}, exc_info=True)
         
         self.events.clear()
@@ -1086,7 +1069,7 @@ class CameraApp:
             
             self.logo_preview_label.configure(image=preview_tk, text="")
             self.logo_preview_label.image = preview_tk  # Keep reference
-        except Exception as exc:
+        except Exception:
             self.logger.warning("logo-preview-failed", exc_info=True)
             self.logo_preview_label.configure(image="", text="Esikatselun lataus epäonnistui")
 
@@ -1107,37 +1090,6 @@ class CameraApp:
         except Exception as e:
             self.logger.error("logo-load-error", exc_info=True)
             messagebox.showerror("Virhe", f"Logon lataus epäonnistui: {str(e)}")
-
-    def _update_logo_preview(self) -> None:
-        """Update logo preview in settings tab."""
-        if self.logo_bgra is None or self.logo_path is None:
-            self.logo_preview_label.configure(text="Ei logoa valittu", image="")
-            return
-        
-        try:
-            # Create a small preview
-            img = self.logo_bgra.copy()
-            # Convert BGRA to RGB for PIL
-            b, g, r, a = cv2.split(img)
-            img_rgb = cv2.merge((r, g, b))
-            
-            # Resize to a reasonable preview size
-            max_size = 100
-            h, w = img_rgb.shape[:2]
-            if w > max_size or h > max_size:
-                scale = max_size / max(w, h)
-                new_w = int(w * scale)
-                new_h = int(h * scale)
-                img_rgb = cv2.resize(img_rgb, (new_w, new_h), interpolation=cv2.INTER_AREA)
-            
-            pil_img = Image.fromarray(img_rgb)
-            preview_photo = ImageTk.PhotoImage(pil_img)
-            self.logo_preview_label.configure(image=preview_photo, text="")
-            # Keep a reference to prevent garbage collection
-            self.logo_preview_label.image = preview_photo
-        except Exception as e:
-            self.logger.error("logo-preview-error", exc_info=True)
-            self.logo_preview_label.configure(text=f"Esikatselu epäonnistui: {str(e)}", image="")
 
     def _overlay_logo(self, frame_bgr: np.ndarray) -> np.ndarray:
         if self.logo_bgra is None:
@@ -1319,17 +1271,6 @@ class CameraApp:
     def _pan_camera(self, slot: int, dx: float, dy: float) -> None:
         """Pan a specific camera's view."""
         self.zoom_states[slot].pan(dx, dy)
-
-    def _pan_active_camera(self, dx: float, dy: float) -> None:
-        """Pan the active camera based on which is visible."""
-        if self.num_cams.get() == 1 and self.indices[0] is not None:
-            self._pan_camera(0, dx, dy)
-        elif self.num_cams.get() == 2:
-            # Pan camera 1 by default, or camera 2 if camera 1 is not active
-            if self.indices[0] is not None:
-                self._pan_camera(0, dx, dy)
-            elif self.indices[1] is not None:
-                self._pan_camera(1, dx, dy)
 
     def save_snapshot(self) -> None:
         try:

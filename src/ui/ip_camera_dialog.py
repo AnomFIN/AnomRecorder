@@ -12,7 +12,7 @@ import logging
 import threading
 import tkinter as tk
 from tkinter import ttk, messagebox
-from typing import Optional, Callable
+from typing import Optional
 
 from ..services.ip_camera import CameraScanner, create_manual_camera, IPCamera
 from .theme import PALETTE
