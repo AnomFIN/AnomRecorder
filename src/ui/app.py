@@ -414,7 +414,7 @@ class CameraApp:
         reconnect_frame = ttk.Labelframe(outer, text="Kameran automaattinen uudelleenyhdistäminen")
         reconnect_frame.pack(fill=tk.X, padx=8, pady=8)
         ttk.Checkbutton(reconnect_frame, text="Yritä automaattisesti uudelleenyhdistää kameraan yhteysvirheessä", 
-                       variable=self.enable_autoreconnect, command=self._save_settings).pack(padx=8, pady=8, anchor=tk.W)
+                       variable=self.autoreconnect_var, command=self._save_settings).pack(padx=8, pady=8, anchor=tk.W)
 
         # Save all settings button
         save_frame = ttk.Frame(outer)
@@ -1650,7 +1650,7 @@ class CameraApp:
     
     def _schedule_reconnect(self, slot: int) -> None:
         """Schedule a reconnection attempt with exponential backoff."""
-        if not self.enable_autoreconnect.get():
+        if not self.autoreconnect_var.get():
             return
         
         delay_ms = int(self.reconnect_delay[slot] * 1000)
@@ -1667,7 +1667,7 @@ class CameraApp:
     
     def _try_autoreconnect(self, slot: int) -> None:
         """Try to reconnect camera."""
-        if not self.enable_autoreconnect.get() or self.caps[slot] is not None:
+        if not self.autoreconnect_var.get() or self.caps[slot] is not None:
             return
         
         saved_index = self.indices[slot]
