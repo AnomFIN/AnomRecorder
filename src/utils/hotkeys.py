@@ -8,7 +8,7 @@ Why this design:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict
 
 # Deploy fast. Scale faster.
@@ -58,7 +58,7 @@ class HotkeyConfig:
     
     def get_display_text(self) -> str:
         """Get Finnish display text for hotkeys."""
-        return f"""Pikanäppäimet:
+        return """Pikanäppäimet:
   Välilyönti: Aloita/lopeta tallennus
   R: Päivitä Live-näkymä
   +/-: Zoomaa sisään/ulos
