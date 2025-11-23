@@ -126,6 +126,12 @@ class CameraApp:
         
         # Reconnect states for each camera
         self.reconnect_states = [ReconnectState(), ReconnectState()]
+        self._reconnect_attempts = [0, 0]  # Track reconnect attempts per camera
+        self._last_reconnect_time = [0.0, 0.0]  # Track last reconnect time per camera
+        self.reconnect_delay = [1.0, 1.0]  # Reconnect delay per camera (for exponential backoff)
+        
+        # Filesystem watcher for recordings
+        self.fs_observer: Optional[Observer] = None
 
         self.record_dir = Path(os.getcwd()) / "recordings"
         self.record_dir.mkdir(parents=True, exist_ok=True)
@@ -414,7 +420,7 @@ class CameraApp:
         reconnect_frame = ttk.Labelframe(outer, text="Kameran automaattinen uudelleenyhdistäminen")
         reconnect_frame.pack(fill=tk.X, padx=8, pady=8)
         ttk.Checkbutton(reconnect_frame, text="Yritä automaattisesti uudelleenyhdistää kameraan yhteysvirheessä", 
-                       variable=self.enable_autoreconnect, command=self._save_settings).pack(padx=8, pady=8, anchor=tk.W)
+                       variable=self.autoreconnect_var, command=self._save_settings).pack(padx=8, pady=8, anchor=tk.W)
 
         # Save all settings button
         save_frame = ttk.Frame(outer)
@@ -707,30 +713,7 @@ class CameraApp:
         
         self.root.after(UPDATE_INTERVAL_MS, self.update_frames)
     
-    def _update_recording_indicator(self, slot: int, is_recording: bool) -> None:
-        """Update visual recording indicator (red=recording, green=idle)."""
-        color = "#8B0000" if is_recording else "#2d5016"  # Dark red or dark green
-        tooltip = "Tallentaa" if is_recording else "Ei tallenna"
-        
-        if slot == 0:
-            self.recording_indicator1.itemconfig(self.recording_dot1, fill=color)
-            # Update tooltip (basic implementation - could use a tooltip library)
-            try:
-                self.recording_indicator1.unbind("<Enter>")
-                self.recording_indicator1.unbind("<Leave>")
-            except Exception:
-                pass
-            self.recording_indicator1.bind("<Enter>", lambda e: self.status_var.set(f"Kamera 1: {tooltip}"))
-            self.recording_indicator1.bind("<Leave>", lambda e: self.status_var.set(""))
-        elif slot == 1:
-            self.recording_indicator2.itemconfig(self.recording_dot2, fill=color)
-            try:
-                self.recording_indicator2.unbind("<Enter>")
-                self.recording_indicator2.unbind("<Leave>")
-            except Exception:
-                pass
-            self.recording_indicator2.bind("<Enter>", lambda e: self.status_var.set(f"Kamera 2: {tooltip}"))
-            self.recording_indicator2.bind("<Leave>", lambda e: self.status_var.set(""))
+
 
     def _annotate(self, slot: int, frame_bgr: np.ndarray, detections: List[Any]) -> np.ndarray:
         annotated = frame_bgr.copy()
@@ -1158,15 +1141,6 @@ class CameraApp:
         self.refresh_events_view()
         self._update_usage_label()
 
-    def _save_all_settings(self) -> None:
-        """Save all settings atomically without disrupting recording."""
-        try:
-            self._save_settings()
-            self._show_toast("Asetukset tallennettu onnistuneesti", error=False)
-        except Exception as exc:
-            self.logger.exception("settings-save-failed", exc_info=exc)
-            self._show_toast(f"Asetusten tallennus epäonnistui: {str(exc)}", error=True)
-
     def _choose_logo(self) -> None:
         path = filedialog.askopenfilename(title="Valitse logo", filetypes=[("Kuvat", "*.png;*.jpg;*.jpeg;*.bmp"), ("Kaikki", "*.*")])
         if not path:
@@ -1225,37 +1199,6 @@ class CameraApp:
         except Exception as e:
             self.logger.error("logo-load-error", exc_info=True)
             messagebox.showerror("Virhe", f"Logon lataus epäonnistui: {str(e)}")
-
-    def _update_logo_preview(self) -> None:
-        """Update logo preview in settings tab."""
-        if self.logo_bgra is None or self.logo_path is None:
-            self.logo_preview_label.configure(text="Ei logoa valittu", image="")
-            return
-        
-        try:
-            # Create a small preview
-            img = self.logo_bgra.copy()
-            # Convert BGRA to RGB for PIL
-            b, g, r, a = cv2.split(img)
-            img_rgb = cv2.merge((r, g, b))
-            
-            # Resize to a reasonable preview size
-            max_size = 100
-            h, w = img_rgb.shape[:2]
-            if w > max_size or h > max_size:
-                scale = max_size / max(w, h)
-                new_w = int(w * scale)
-                new_h = int(h * scale)
-                img_rgb = cv2.resize(img_rgb, (new_w, new_h), interpolation=cv2.INTER_AREA)
-            
-            pil_img = Image.fromarray(img_rgb)
-            preview_photo = ImageTk.PhotoImage(pil_img)
-            self.logo_preview_label.configure(image=preview_photo, text="")
-            # Keep a reference to prevent garbage collection
-            self.logo_preview_label.image = preview_photo
-        except Exception as e:
-            self.logger.error("logo-preview-error", exc_info=True)
-            self.logo_preview_label.configure(text=f"Esikatselu epäonnistui: {str(e)}", image="")
 
     def _overlay_logo(self, frame_bgr: np.ndarray) -> np.ndarray:
         if self.logo_bgra is None:
@@ -1386,12 +1329,6 @@ class CameraApp:
         if slot is not None:
             self._update_zoom(slot, direction)
     
-    def _pan_active_camera(self, dx: float, dy: float) -> None:
-        """Pan the active camera."""
-        slot = 0 if self.indices[0] is not None else (1 if self.indices[1] is not None else None)
-        if slot is not None:
-            self._pan(slot, dx, dy)
-    
     def _on_mouse_wheel_zoom(self, event) -> None:
         """Handle Ctrl+MouseWheel zoom."""
         slot = 0 if self.indices[0] is not None else (1 if self.indices[1] is not None else None)
@@ -1401,18 +1338,52 @@ class CameraApp:
             else:
                 self._update_zoom(slot, "out")
     
-    def _attempt_reconnect(self, slot: int) -> None:
-        """Attempt to reconnect a camera."""
-        if self.indices[slot] is None:
-            return
-        try:
-            self.reconnect_states[slot].record_attempt()
-            self.start_camera(slot, self.indices[slot])
-            if self.caps[slot] is not None:
-                self.status_var.set(f"Kamera {slot + 1} yhdistetty uudelleen")
-                self.logger.info("camera-reconnected", extra={"slot": slot})
-        except Exception as exc:
-            self.logger.warning("reconnect-failed", extra={"slot": slot}, exc_info=exc)
+    # Hotkey wrapper methods for keyboard bindings
+    def _hotkey_zoom_in(self) -> None:
+        """Hotkey wrapper: Zoom in on active camera."""
+        self._zoom_active_camera("in")
+    
+    def _hotkey_zoom_out(self) -> None:
+        """Hotkey wrapper: Zoom out on active camera."""
+        self._zoom_active_camera("out")
+    
+    def _hotkey_reset_zoom(self) -> None:
+        """Hotkey wrapper: Reset zoom on active camera."""
+        self._zoom_active_camera("reset")
+    
+    def _hotkey_pan_left(self) -> None:
+        """Hotkey wrapper: Pan active camera left."""
+        self._pan_active_camera(-0.1, 0)
+    
+    def _hotkey_pan_right(self) -> None:
+        """Hotkey wrapper: Pan active camera right."""
+        self._pan_active_camera(0.1, 0)
+    
+    def _hotkey_pan_up(self) -> None:
+        """Hotkey wrapper: Pan active camera up."""
+        self._pan_active_camera(0, -0.1)
+    
+    def _hotkey_pan_down(self) -> None:
+        """Hotkey wrapper: Pan active camera down."""
+        self._pan_active_camera(0, 0.1)
+    
+    def _hotkey_toggle_recording(self) -> None:
+        """Hotkey wrapper: Toggle manual recording (currently a placeholder)."""
+        # Recording is controlled by motion detection, not manual toggle
+        # This is a placeholder for future functionality
+        pass
+    
+    def _on_video_click(self, slot: int, event) -> None:
+        """Handle mouse click on video display area."""
+        # Store click position for potential drag operation
+        # This can be extended for features like click-to-center or region selection
+        pass
+    
+    def _on_video_drag(self, slot: int, event) -> None:
+        """Handle mouse drag on video display area."""
+        # This can be used for pan-by-drag or region selection
+        # Currently a placeholder for future drag-to-pan functionality
+        pass
     
     def _tick_reconnect(self) -> None:
         """Periodic check for camera reconnection."""
@@ -1425,28 +1396,6 @@ class CameraApp:
         for state in self.reconnect_states:
             state.enabled = enabled
         self._save_settings()
-    
-    def _load_existing_recordings(self) -> None:
-        """Load existing recordings from disk on startup."""
-        try:
-            for file in sorted(self.record_dir.glob("*.avi")):
-                if not file.is_file():
-                    continue
-                self.event_counter += 1
-                event = EventItem(
-                    id=self.event_counter,
-                    name=file.stem,
-                    path=str(file),
-                    start=datetime.fromtimestamp(file.stat().st_mtime),
-                    end=None,
-                    duration=None,
-                    persons_max=0,
-                )
-                self.events.append(event)
-            self.refresh_events_view()
-            self.logger.info("loaded-existing-recordings", extra={"count": len(self.events)})
-        except Exception as exc:
-            self.logger.warning("load-recordings-failed", exc_info=exc)
     
     def _delete_selected_recording(self) -> None:
         """Delete selected recording(s) from list."""
@@ -1530,115 +1479,6 @@ class CameraApp:
         except Exception as exc:
             self.logger.warning("filesystem-watcher-failed", exc_info=exc)
     
-    def _load_existing_recordings(self) -> None:
-        """Load existing recordings from disk."""
-        try:
-            existing_files = sorted(self.record_dir.glob("recording_*.avi"), key=lambda f: f.stat().st_mtime)
-            # Only add new files that aren't already in events
-            existing_paths = {event.path for event in self.events}
-            for file_path in existing_files:
-                path_str = str(file_path)
-                if path_str not in existing_paths:
-                    self.event_counter += 1
-                    stat = file_path.stat()
-                    event = EventItem(
-                        id=self.event_counter,
-                        name=file_path.name,
-                        path=path_str,
-                        start=datetime.fromtimestamp(stat.st_mtime),
-                        end=datetime.fromtimestamp(stat.st_mtime),
-                        duration=0.0,
-                        persons_max=0,
-                    )
-                    self.events.append(event)
-            self.refresh_events_view()
-        except Exception as exc:
-            self.logger.warning("load-recordings-failed", exc_info=exc)
-    
-    def _delete_selected_recordings(self) -> None:
-        """Delete selected recordings, moving to trash when possible."""
-        selection = self.events_view.selection()
-        if not selection:
-            messagebox.showinfo("Huom", "Valitse ensin tallenteet.")
-            return
-        
-        count = len(selection)
-        if not messagebox.askyesno("Vahvista", f"Poistetaanko {count} tallenne(tta) roskakoriin?"):
-            return
-        
-        deleted = []
-        for path in selection:
-            try:
-                # Try to move to trash first
-                send2trash.send2trash(path)
-                deleted.append(path)
-                self.logger.info("recording-deleted", extra={"path": path})
-            except Exception as exc:
-                self.logger.warning("trash-failed", extra={"path": path}, exc_info=exc)
-                # Fallback: ask for permanent deletion
-                if messagebox.askyesno("Virhe", f"Roskakoriin siirto epäonnistui.\nPoista pysyvästi: {Path(path).name}?"):
-                    try:
-                        Path(path).unlink()
-                        deleted.append(path)
-                    except Exception as exc2:
-                        self.logger.exception("delete-failed", extra={"path": path}, exc_info=exc2)
-                        messagebox.showerror("Virhe", f"Poisto epäonnistui: {exc2}")
-        
-        # Remove from events list
-        self.events = [e for e in self.events if e.path not in deleted]
-        self.refresh_events_view()
-        self._update_usage_label()
-        
-        if deleted:
-            messagebox.showinfo("Valmis", f"{len(deleted)} tallenne(tta) poistettu.")
-    
-    def _update_recording_indicator(self) -> None:
-        """Update the recording indicator based on current state."""
-        is_any_recording = any(self.is_recording)
-        if is_any_recording:
-            self.recording_indicator_var.set("● Tallentaa")
-            self.recording_indicator_label.configure(foreground="#ff0000")
-        else:
-            self.recording_indicator_var.set("● Ei tallenna")
-            self.recording_indicator_label.configure(foreground="#00ff00")
-    
-    def _pan(self, slot: int, dx: int, dy: int) -> None:
-        """Pan the view for the given camera slot."""
-        self.pan_x[slot] += dx
-        self.pan_y[slot] += dy
-        # Panning will be applied during frame rendering
-    
-    def _setup_hotkeys(self) -> None:
-        """Setup keyboard shortcuts."""
-        self.root.bind("<space>", lambda e: self._toggle_recording())
-        self.root.bind("r", lambda e: self.refresh_cameras())
-        self.root.bind("R", lambda e: self.refresh_cameras())
-        self.root.bind("<plus>", lambda e: self._zoom_active_camera("in"))
-        self.root.bind("<minus>", lambda e: self._zoom_active_camera("out"))
-        self.root.bind("<Escape>", lambda e: self.on_close())
-        self.root.bind("<Up>", lambda e: self._pan_active_camera(0, -20))
-        self.root.bind("<Down>", lambda e: self._pan_active_camera(0, 20))
-        self.root.bind("<Left>", lambda e: self._pan_active_camera(-20, 0))
-        self.root.bind("<Right>", lambda e: self._pan_active_camera(20, 0))
-    
-    def _toggle_recording(self) -> None:
-        """Toggle recording state (placeholder - motion detection controls actual recording)."""
-        # In this app, recording is controlled by motion detection, not manual toggle
-        # This is a placeholder for future manual recording control
-        pass
-    
-    def _zoom_active_camera(self, direction: str) -> None:
-        """Zoom the active camera."""
-        slot = 0 if self.indices[0] is not None else (1 if self.indices[1] is not None else None)
-        if slot is not None:
-            self._update_zoom(slot, direction)
-    
-    def _pan_active_camera(self, dx: int, dy: int) -> None:
-        """Pan the active camera."""
-        slot = 0 if self.indices[0] is not None else (1 if self.indices[1] is not None else None)
-        if slot is not None:
-            self._pan(slot, dx, dy)
-    
     def _save_settings_safe(self) -> None:
         """Save settings without stopping recording and apply immediately."""
         try:
@@ -1650,16 +1490,16 @@ class CameraApp:
     
     def _schedule_reconnect(self, slot: int) -> None:
         """Schedule a reconnection attempt with exponential backoff."""
-        if not self.enable_autoreconnect.get():
+        if not self.autoreconnect_var.get():
             return
         
         delay_ms = int(self.reconnect_delay[slot] * 1000)
         self.reconnect_delay[slot] = min(self.reconnect_delay[slot] * 2, 30.0)  # Max 30 seconds
-        self.reconnect_attempts[slot] += 1
+        self._reconnect_attempts[slot] += 1
         
         self.logger.info(f"scheduling-reconnect", extra={
             "slot": slot,
-            "attempt": self.reconnect_attempts[slot],
+            "attempt": self._reconnect_attempts[slot],
             "delay_ms": delay_ms
         })
         
@@ -1667,7 +1507,7 @@ class CameraApp:
     
     def _try_autoreconnect(self, slot: int) -> None:
         """Try to reconnect camera."""
-        if not self.enable_autoreconnect.get() or self.caps[slot] is not None:
+        if not self.autoreconnect_var.get() or self.caps[slot] is not None:
             return
         
         saved_index = self.indices[slot]
@@ -1684,7 +1524,7 @@ class CameraApp:
                 ok, _ = cap.read()
                 if ok:
                     self.caps[slot] = cap
-                    self.reconnect_attempts[slot] = 0
+                    self._reconnect_attempts[slot] = 0
                     self.reconnect_delay[slot] = 1.0
                     self.status_var.set(f"Kamera {slot + 1} yhdistetty uudelleen")
                     self.logger.info(f"camera-{slot}-reconnected")
@@ -1695,7 +1535,7 @@ class CameraApp:
             self.logger.warning(f"reconnect-failed-slot-{slot}", exc_info=exc)
         
         # Schedule next attempt if still disconnected
-        if self.reconnect_attempts[slot] < 10:  # Max 10 attempts
+        if self._reconnect_attempts[slot] < 10:  # Max 10 attempts
             self._schedule_reconnect(slot)
 
     def _is_recording(self) -> bool:
