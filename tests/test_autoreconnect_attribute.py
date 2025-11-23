@@ -23,17 +23,8 @@ def test_autoreconnect_var_is_used():
     with open(app_file, 'r', encoding='utf-8') as f:
         content = f.read()
     
-    # Parse the Python file as AST
-    tree = ast.parse(content)
-    
-    # Find the CameraApp class
-    camera_app_class = None
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef) and node.name == 'CameraApp':
-            camera_app_class = node
-            break
-    
-    assert camera_app_class is not None, "CameraApp class not found"
+    # Verify that the CameraApp class exists in the file
+    assert 'class CameraApp' in content, "CameraApp class not found"
     
     # Verify autoreconnect_var is defined somewhere in the class
     # (It's defined in _build_settings_tab which is called from __init__)
