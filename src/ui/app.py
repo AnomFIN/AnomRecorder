@@ -129,7 +129,6 @@ class CameraApp:
         self._reconnect_attempts = [0, 0]  # Track reconnect attempts per camera
         self._last_reconnect_time = [0.0, 0.0]  # Track last reconnect time per camera
         self.reconnect_delay = [1.0, 1.0]  # Reconnect delay per camera (for exponential backoff)
-        self.reconnect_attempts = [0, 0]  # Alternative reconnect attempt tracking
         
         # Filesystem watcher for recordings
         self.fs_observer: Optional[Observer] = None
@@ -1496,11 +1495,11 @@ class CameraApp:
         
         delay_ms = int(self.reconnect_delay[slot] * 1000)
         self.reconnect_delay[slot] = min(self.reconnect_delay[slot] * 2, 30.0)  # Max 30 seconds
-        self.reconnect_attempts[slot] += 1
+        self._reconnect_attempts[slot] += 1
         
         self.logger.info(f"scheduling-reconnect", extra={
             "slot": slot,
-            "attempt": self.reconnect_attempts[slot],
+            "attempt": self._reconnect_attempts[slot],
             "delay_ms": delay_ms
         })
         
@@ -1525,7 +1524,7 @@ class CameraApp:
                 ok, _ = cap.read()
                 if ok:
                     self.caps[slot] = cap
-                    self.reconnect_attempts[slot] = 0
+                    self._reconnect_attempts[slot] = 0
                     self.reconnect_delay[slot] = 1.0
                     self.status_var.set(f"Kamera {slot + 1} yhdistetty uudelleen")
                     self.logger.info(f"camera-{slot}-reconnected")
@@ -1536,7 +1535,7 @@ class CameraApp:
             self.logger.warning(f"reconnect-failed-slot-{slot}", exc_info=exc)
         
         # Schedule next attempt if still disconnected
-        if self.reconnect_attempts[slot] < 10:  # Max 10 attempts
+        if self._reconnect_attempts[slot] < 10:  # Max 10 attempts
             self._schedule_reconnect(slot)
 
     def _is_recording(self) -> bool:
