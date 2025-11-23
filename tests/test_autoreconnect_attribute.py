@@ -45,6 +45,14 @@ def test_autoreconnect_var_is_used():
         "autoreconnect_var should be initialized as a BooleanVar"
 
 
+def _get_method_source(content: str, tree: ast.AST, method_name: str) -> str:
+    """Helper function to extract method source code using AST parsing."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == method_name:
+            return ast.get_source_segment(content, node) or ""
+    return ""
+
+
 def test_autoreconnect_usage_in_methods():
     """Test that autoreconnect_var is used correctly in relevant methods."""
     app_file = os.path.join(os.path.dirname(__file__), '..', 'src', 'ui', 'app.py')
@@ -52,20 +60,16 @@ def test_autoreconnect_usage_in_methods():
     with open(app_file, 'r', encoding='utf-8') as f:
         content = f.read()
     
+    tree = ast.parse(content)
+    
     # Check that _schedule_reconnect uses autoreconnect_var.get()
-    assert 'def _schedule_reconnect' in content
-    schedule_start = content.find('def _schedule_reconnect')
-    schedule_end = content.find('\n    def ', schedule_start + 1)
-    schedule_method = content[schedule_start:schedule_end]
+    schedule_method = _get_method_source(content, tree, '_schedule_reconnect')
+    assert schedule_method, "_schedule_reconnect method not found"
     assert 'self.autoreconnect_var.get()' in schedule_method, \
         "_schedule_reconnect should use autoreconnect_var.get()"
     
     # Check that _try_autoreconnect uses autoreconnect_var.get()
-    assert 'def _try_autoreconnect' in content
-    try_start = content.find('def _try_autoreconnect')
-    try_end = content.find('\n    def ', try_start + 1)
-    if try_end == -1:
-        try_end = len(content)
-    try_method = content[try_start:try_end]
+    try_method = _get_method_source(content, tree, '_try_autoreconnect')
+    assert try_method, "_try_autoreconnect method not found"
     assert 'self.autoreconnect_var.get()' in try_method, \
         "_try_autoreconnect should use autoreconnect_var.get()"
