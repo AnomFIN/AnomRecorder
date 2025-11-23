@@ -545,56 +545,6 @@ class CameraApp:
         self.caps[slot] = None
         self.indices[slot] = None
     
-    def _attempt_reconnect(self, slot: int) -> None:
-        """Attempt to reconnect to a camera with exponential backoff."""
-        now = time.time()
-        
-        # Calculate exponential backoff delay: 2^attempts seconds (1, 2, 4, 8, 16, max 60)
-        attempt = self._reconnect_attempts[slot]
-        delay = min(2 ** attempt, 60)
-        
-        # Check if enough time has passed since last attempt
-        if now - self._last_reconnect_time[slot] < delay:
-            return
-        
-        self._last_reconnect_time[slot] = now
-        self._reconnect_attempts[slot] += 1
-        
-        index = self.indices[slot]
-        if index is None:
-            return
-        
-        self.logger.info(f"attempting-reconnect", extra={"slot": slot, "attempt": attempt + 1, "delay": delay})
-        self.status_var.set(f"Yritetään kameran {slot + 1} uudelleenyhdistämistä (yritys {attempt + 1})...")
-        
-        # Try to reconnect
-        try:
-            self.stop_camera(slot)
-            cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-            
-            if cap.isOpened():
-                # Test if we can read a frame
-                ok, _ = cap.read()
-                if ok:
-                    self.caps[slot] = cap
-                    self.indices[slot] = index
-                    self._reconnect_attempts[slot] = 0  # Reset attempts on success
-                    self.status_var.set(f"Kamera {slot + 1} uudelleenyhdistetty onnistuneesti")
-                    self._show_toast(f"Kamera {slot + 1} yhdistetty uudelleen", error=False)
-                    self.logger.info("reconnect-success", extra={"slot": slot})
-                    return
-            
-            cap.release()
-        except Exception as exc:
-            self.logger.warning("reconnect-failed", extra={"slot": slot}, exc_info=True)
-        
-        # Reconnect failed
-        if self._reconnect_attempts[slot] >= 6:  # Max 6 attempts (up to 32 seconds backoff)
-            self._reconnect_attempts[slot] = 0  # Reset for next cycle
-            self._show_toast(f"Kamera {slot + 1}: Uudelleenyhdistäminen epäonnistui", error=True)
-
     # ------------------------------------------------------------------
     # Frame pipeline
     def update_frames(self) -> None:
