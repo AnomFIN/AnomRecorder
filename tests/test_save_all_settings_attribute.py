@@ -1,20 +1,27 @@
 """Test that _save_all_settings attribute is correctly defined in CameraApp.
 
-This test ensures that the AttributeError for missing '__save all settings'
-functionality has been resolved by verifying the _save_all_settings method
-exists and follows Pythonic conventions.
+This test ensures that the AttributeError for the missing _save_all_settings
+functionality has been resolved by verifying the method exists and follows
+Pythonic conventions.
 """
 
 import ast
 import os
 
 
+# Module-level constant for the app file path
+APP_FILE_PATH = os.path.join(os.path.dirname(__file__), '..', 'src', 'ui', 'app.py')
+
+
+def _read_app_content() -> str:
+    """Read the app.py file content."""
+    with open(APP_FILE_PATH, 'r', encoding='utf-8') as f:
+        return f.read()
+
+
 def test_save_all_settings_method_exists():
     """Test that _save_all_settings method is defined in CameraApp class."""
-    app_file = os.path.join(os.path.dirname(__file__), '..', 'src', 'ui', 'app.py')
-
-    with open(app_file, 'r', encoding='utf-8') as f:
-        content = f.read()
+    content = _read_app_content()
 
     # Verify the method is defined
     assert 'def _save_all_settings(self)' in content, \
@@ -23,11 +30,7 @@ def test_save_all_settings_method_exists():
 
 def test_save_all_settings_has_docstring():
     """Test that _save_all_settings method has a proper docstring."""
-    app_file = os.path.join(os.path.dirname(__file__), '..', 'src', 'ui', 'app.py')
-
-    with open(app_file, 'r', encoding='utf-8') as f:
-        content = f.read()
-
+    content = _read_app_content()
     tree = ast.parse(content)
 
     # Find the _save_all_settings method
@@ -50,10 +53,7 @@ def test_save_all_settings_has_docstring():
 
 def test_save_all_settings_is_referenced():
     """Test that _save_all_settings method is properly referenced in UI code."""
-    app_file = os.path.join(os.path.dirname(__file__), '..', 'src', 'ui', 'app.py')
-
-    with open(app_file, 'r', encoding='utf-8') as f:
-        content = f.read()
+    content = _read_app_content()
 
     # Should be referenced as a button command
     assert 'command=self._save_all_settings' in content, \
@@ -62,14 +62,11 @@ def test_save_all_settings_is_referenced():
 
 def test_no_duplicate_save_buttons():
     """Test that there are no excessive duplicate save buttons in settings tab."""
-    app_file = os.path.join(os.path.dirname(__file__), '..', 'src', 'ui', 'app.py')
-
-    with open(app_file, 'r', encoding='utf-8') as f:
-        content = f.read()
+    content = _read_app_content()
 
     # Count occurrences of save buttons in the settings tab
     save_button_count = content.count('text="Tallenna asetukset"')
 
-    # There should be at most 1-2 save buttons (one main save button is expected)
-    assert save_button_count <= 2, \
-        f"Found {save_button_count} save buttons, expected at most 2"
+    # There should be exactly 1 main save button in the settings tab
+    assert save_button_count == 1, \
+        f"Found {save_button_count} save buttons, expected exactly 1"
