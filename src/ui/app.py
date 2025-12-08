@@ -372,50 +372,19 @@ class CameraApp:
         self.hotkeys_text.insert("1.0", self.hotkeys.get_display_text())
         self.hotkeys_text.config(state=tk.DISABLED)
         
-        # Save settings button
-        save_frame = ttk.Frame(outer)
-        save_frame.pack(fill=tk.X, padx=8, pady=8)
-        ttk.Button(save_frame, text="Tallenna asetukset", command=self._save_settings_safely, 
-                   style="Accent.TButton").pack(side=tk.LEFT)
-        self.settings_status_var = tk.StringVar(value="")
-        ttk.Label(save_frame, textvariable=self.settings_status_var, foreground=PALETTE["success"]).pack(side=tk.LEFT, padx=(12, 0))
-
-        # Save settings button
-        save_frame = ttk.Frame(outer)
-        save_frame.pack(fill=tk.X, padx=8, pady=12)
-        ttk.Button(save_frame, text="Tallenna asetukset", command=self._save_all_settings, style="Accent.TButton").pack(side=tk.LEFT)
-
-        # Logo preview
-        preview_frame = ttk.Labelframe(outer, text="Logo-esikatselu")
-        preview_frame.pack(fill=tk.X, padx=8, pady=8)
-        self.logo_preview_label = ttk.Label(preview_frame, text="Ei logoa valittu")
-        self.logo_preview_label.pack(pady=12)
-
-        # Camera autoreconnect
-        reconnect_frame = ttk.Labelframe(outer, text="Kameran automaattinen uudelleenyhdistäminen")
-        reconnect_frame.pack(fill=tk.X, padx=8, pady=8)
-        ttk.Checkbutton(reconnect_frame, text="Yritä automaattisesti uudelleenyhdistää kameraan yhteysvirheessä", 
-                       variable=self.autoreconnect_var, command=self._save_settings).pack(padx=8, pady=8, anchor=tk.W)
-
         # Save all settings button
         save_frame = ttk.Frame(outer)
         save_frame.pack(fill=tk.X, padx=8, pady=8)
-        ttk.Button(save_frame, text="Tallenna asetukset", command=self._save_all_settings, style="Accent.TButton").pack(side=tk.LEFT)
-        ttk.Label(save_frame, text="Tallentaa kaikki asetukset tiedostoon", foreground=PALETTE["muted"]).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(save_frame, text="Tallenna asetukset", command=self._save_all_settings,
+                   style="Accent.TButton").pack(side=tk.LEFT)
+        ttk.Label(save_frame, text="Tallentaa kaikki asetukset tiedostoon",
+                  foreground=PALETTE["muted"]).pack(side=tk.LEFT, padx=(8, 0))
+        self.settings_status_var = tk.StringVar(value="")
+        ttk.Label(save_frame, textvariable=self.settings_status_var,
+                  foreground=PALETTE["success"]).pack(side=tk.LEFT, padx=(12, 0))
 
-        # Hotkeys reference
-        hotkeys_frame = ttk.Labelframe(outer, text="Pikanäppäimet")
-        hotkeys_frame.pack(fill=tk.X, padx=8, pady=8)
-        hotkeys_text = (
-            "• +/- : Zoomaa sisään/ulos\n"
-            "• Nuolinäppäimet : Panoroi näkymää\n"
-            "• Esc : Nollaa zoom\n"
-            "• R : Päivitä kamerat\n"
-            "• Välilyönti : Tallennuksen ohjaus (tulossa)"
-        )
-        ttk.Label(hotkeys_frame, text=hotkeys_text, foreground=PALETTE["muted"], justify=tk.LEFT).pack(padx=8, pady=8, anchor=tk.W)
-
-        ttk.Label(outer, text="Kamerajärjestelmä by AnomFIN", foreground=PALETTE["muted"]).pack(anchor=tk.E, pady=(12, 0))
+        ttk.Label(outer, text="Kamerajärjestelmä by AnomFIN",
+                  foreground=PALETTE["muted"]).pack(anchor=tk.E, pady=(12, 0))
 
     # ------------------------------------------------------------------
     # Camera management
@@ -1039,6 +1008,18 @@ class CameraApp:
         except Exception as exc:
             self.logger.exception("settings-save-failed", exc_info=exc)
             messagebox.showerror("Virhe", f"Asetusten tallennus epäonnistui: {exc}")
+
+    def _save_all_settings(self) -> None:
+        """Save all application settings to persistent storage.
+
+        This method consolidates all settings (storage limits, branding, motion
+        detection, hotkeys, IP cameras, etc.) and saves them to the settings
+        file. Provides user feedback via the status label.
+
+        The operation is performed atomically to prevent data corruption if
+        interrupted. Does not interrupt any ongoing recordings.
+        """
+        self._save_settings_safely()
 
     def _save_limit(self) -> None:
         try:
