@@ -25,19 +25,42 @@ tests/             # Pytest-yksikkötestit
 ```
 
 ## Asennus ja ajaminen
-1. **Asenna riippuvuudet** (suositus: virtuaaliympäristö):
-   ```bash
-   python -m pip install -r requirements.txt
-   python -m pip install pytest
-   ```
-2. **Käynnistä sovellus** kehitystilassa:
-   ```bash
-   python -m src.index
-   ```
-   tai yhteensopivuussyistä:
-   ```bash
-   python usb_cam_viewer.py
-   ```
+
+### Automaattinen asennus (suositeltu)
+Käytä reaktiivista asennusohjelmaa, joka asentaa kaikki riippuvuudet, testaa asennuksen ja korjaa automaattisesti virheet:
+
+**Windows:**
+```batch
+install_dependencies.bat
+```
+
+**Linux/Mac/CLI:**
+```bash
+python install.py
+```
+
+Asennusohjelma:
+- ✓ Tarkistaa Python-version
+- ✓ Asentaa kaikki riippuvuudet
+- ✓ Testaa asennuksen
+- ✓ Havaitsee ja korjaa virheet automaattisesti
+- ✓ Varmistaa että sovellus toimii
+
+### Manuaalinen asennus
+Jos haluat asentaa manuaalisesti (esim. virtuaaliympäristössä):
+```bash
+python -m pip install -r requirements.txt
+python -m pip install pytest
+```
+
+### Sovelluksen käynnistäminen
+```bash
+python usb_cam_viewer.py
+```
+tai
+```bash
+python -m src.index
+```
 
 ## Testit
 ```bash

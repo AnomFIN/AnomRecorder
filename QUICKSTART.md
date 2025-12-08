@@ -15,12 +15,26 @@ AnomRecorder is a USB camera surveillance system for Windows that provides:
 
 ## Quick Start
 
-### Option 1: Run from Python
+### Option 1: Run from Python (Recommended)
 
-1. Install dependencies:
+1. Install dependencies with the automated installer:
+   
+   **Windows:**
    ```batch
    install_dependencies.bat
    ```
+   
+   **Linux/Mac/CLI:**
+   ```bash
+   python install.py
+   ```
+   
+   The installer will:
+   - Check system requirements
+   - Install all dependencies
+   - Test the installation
+   - Automatically fix any errors
+   - Verify the application works
 
 2. Run the application:
    ```batch
@@ -31,7 +45,7 @@ AnomRecorder is a USB camera surveillance system for Windows that provides:
 
 1. Build the executable:
    ```batch
-   build_simple.bat
+   build.bat
    ```
 
 2. Run the program:
