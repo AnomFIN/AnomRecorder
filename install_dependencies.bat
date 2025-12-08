@@ -1,8 +1,9 @@
 @echo off
 REM Install dependencies for AnomRecorder
+REM This script now uses the new install.py with reactive GUI
 
 echo ================================================
-echo Installing AnomRecorder Dependencies
+echo Installing AnomRecorder
 echo ================================================
 echo.
 
@@ -15,9 +16,8 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo Installing required packages...
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+echo Launching installer...
+python install.py
 
 if errorlevel 1 (
     echo.
@@ -26,9 +26,4 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo.
-echo ================================================
-echo Dependencies installed successfully!
-echo You can now run: python usb_cam_viewer.py
-echo ================================================
 pause
