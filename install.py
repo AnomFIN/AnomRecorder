@@ -676,7 +676,7 @@ class InstallerCLI:
 
 def main():
     """Main entry point"""
-    if GUI_AVAILABLE and os.environ.get('DISPLAY') or sys.platform == 'win32':
+    if GUI_AVAILABLE and (os.environ.get('DISPLAY') or sys.platform == 'win32'):
         # Try GUI mode
         try:
             root = tk.Tk()
