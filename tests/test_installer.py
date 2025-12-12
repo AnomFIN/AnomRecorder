@@ -69,16 +69,16 @@ class TestInstallerAutoStart(unittest.TestCase):
             with patch.object(self.install_module.InstallerGUI, 'create_widgets'):
                 installer = self.install_module.InstallerGUI(root_mock)
                 installer.python_version_ok = True
-                installer.start_installation = Mock()
+                installer._do_installation = Mock()
                 installer.log_text = Mock()
                 
                 # First call should work
                 installer.auto_start_installation()
-                installer.start_installation.assert_called_once()
+                installer._do_installation.assert_called_once()
                 
                 # Second call should be blocked
                 installer.auto_start_installation()
-                installer.start_installation.assert_called_once()  # Still just once
+                installer._do_installation.assert_called_once()  # Still just once
 
     @patch('install.GUI_AVAILABLE', True)
     def test_auto_start_blocked_when_python_not_ok(self):
@@ -98,7 +98,7 @@ class TestInstallerAutoStart(unittest.TestCase):
 
     @patch('install.GUI_AVAILABLE', True)
     def test_installation_started_flag_set_before_start(self):
-        """Test that installation_started flag is set before calling start_installation."""
+        """Test that installation_started flag is set before calling _do_installation."""
         root_mock = Mock()
         
         with patch('install.tk.Tk', return_value=root_mock):
@@ -108,19 +108,20 @@ class TestInstallerAutoStart(unittest.TestCase):
                 installer.installation_started = False
                 installer.log_text = Mock()
                 
-                # Track flag state when start_installation is called
-                flag_state_at_call = []
+                # Track flag state when _do_installation is called
+                flag_was_set = False
                 
                 def track_flag():
-                    flag_state_at_call.append(installer.installation_started)
+                    nonlocal flag_was_set
+                    flag_was_set = installer.installation_started
                 
-                installer.start_installation = Mock(side_effect=track_flag)
+                installer._do_installation = Mock(side_effect=track_flag)
                 
                 # Call auto_start
                 installer.auto_start_installation()
                 
-                # Verify flag was True when start_installation was called
-                self.assertTrue(flag_state_at_call[0])
+                # Verify flag was True when _do_installation was called
+                self.assertTrue(flag_was_set)
 
     @patch('install.GUI_AVAILABLE', True)
     def test_start_installation_prevents_duplicate_runs(self):

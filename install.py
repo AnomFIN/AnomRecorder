@@ -259,18 +259,25 @@ class InstallerGUI:
 
     def auto_start_installation(self):
         """Start installation automatically after checks."""
+        # Atomic check-and-set to prevent race conditions
         if self.installation_started or not self.python_version_ok:
             return
         self.installation_started = True
         self.log("\nAuto-starting installation to complete setup without extra clicks.")
-        self.start_installation()
-
+        # Call start_installation without it checking the flag again
+        self._do_installation()
+    
     def start_installation(self):
         """Start the installation process"""
+        # Atomic check-and-set to prevent duplicate runs
         if self.installation_started:
             self.log("Installation already running.")
             return
         self.installation_started = True
+        self._do_installation()
+    
+    def _do_installation(self):
+        """Perform the actual installation (internal method)."""
         self.install_button.config(state=tk.DISABLED)
         self.progress_bar.start()
         
