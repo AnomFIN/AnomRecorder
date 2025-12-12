@@ -53,6 +53,45 @@ python -m pip install -r requirements.txt
 python -m pip install pytest
 ```
 
+### Virtuaaliympäristöautomaatti (`venvi.py`)
+Kaikki komennot voi ajaa yhdellä tiedostolla, joka luo `.venv`-hakemiston, asentaa riippuvuudet, ajaa testit ja tarvittaessa käynnistää Node-palvelun (jos `package.json` löytyy):
+
+**PowerShell / CMD:**
+```powershell
+# Luo .venv, asentaa riippuvuudet, ajaa testit ja käynnistää sovelluksen
+python .\venvi.py run
+
+# Sama ilman testejä (nopeampi dev-sykli)
+python .\venvi.py run --skip-tests
+
+# Pelkkä ympäristön valmistelu ilman käynnistystä
+python .\venvi.py setup
+
+# Testien ajo omilla pytest-parametreilla
+python .\venvi.py test --pytest-args -q
+
+# Node-palvelu mukaan, jos package.json löytyy
+python .\venvi.py run --with-npm
+```
+
+**Linux/macOS:**
+```bash
+# Luo .venv, asentaa riippuvuudet, ajaa testit ja käynnistää sovelluksen
+python venvi.py run
+
+# Sama ilman testejä (nopeampi dev-sykli)
+python venvi.py run --skip-tests
+
+# Pelkkä ympäristön valmistelu ilman käynnistystä
+python venvi.py setup
+
+# Testien ajo omilla pytest-parametreilla
+python venvi.py test --pytest-args -q
+
+# Node-palvelu mukaan, jos package.json löytyy
+python venvi.py run --with-npm
+```
+
 ### Sovelluksen käynnistäminen
 ```bash
 python usb_cam_viewer.py
