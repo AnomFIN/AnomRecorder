@@ -26,16 +26,18 @@ from PIL import Image, ImageTk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from ..core.detection import PersonDetector
-from ..core.humanize import format_bytes, format_percentage, format_timestamp
+from ..core.humanize import format_bytes, format_percentage, format_timestamp_relative
 from ..services.camera import list_cameras
 from ..services.ip_camera import IPCamera
 from ..services.recording import RecorderConfig, RollingRecorder
+from ..services.audio import AudioRecorder, AudioLevelMeter, list_input_devices, AudioUnavailableError
 from .theme import PALETTE, apply_dark_theme
 from .ip_camera_dialog import show_ip_camera_dialog
-from ..utils.resources import find_resource
+from ..utils.resources import find_resource, find_user_logo_default
 from ..utils.zoom import ZoomState, crop_zoom
 from ..utils.hotkeys import HotkeyConfig
 from ..utils.reconnect import ReconnectState
+from ..utils.ffmpeg_opts import apply_rtsp_defaults
 
 # Where code learns and brands scale.
 
@@ -127,7 +129,8 @@ class CameraApp:
         self.storage_limit_gb = tk.DoubleVar(value=5.0)
         self.motion_threshold = tk.DoubleVar(value=0.05)
         self.logo_alpha = tk.DoubleVar(value=0.25)
-        self.logo_path: Optional[str] = find_resource("logo.png")
+        # Prefer user default logo under ~/downloads/logo.png (per request)
+        self.logo_path: Optional[str] = find_user_logo_default() or find_resource("logo.png")
         self.logo_bgra: Optional[np.ndarray] = None
         self.logo_preview_img: Optional[ImageTk.PhotoImage] = None
         
@@ -147,6 +150,9 @@ class CameraApp:
         self.playback_speed = tk.DoubleVar(value=1.0)
         self.playback_path: Optional[str] = None
         self.playback_img: Optional[ImageTk.PhotoImage] = None
+        self.playback_last_frame_bgr: Optional[np.ndarray] = None
+        self.playback_playlist: Optional[List[str]] = None
+        self.playback_playlist_index: int = 0
         self.playback_last_tick = time.time()
         
         # Refresh lock to prevent concurrent refreshes
@@ -168,6 +174,20 @@ class CameraApp:
         self.root.after(UPDATE_INTERVAL_MS, self.update_frames)
         self.root.after(2000, self._tick_usage)
         self.root.after(5000, self._tick_reconnect)  # Periodic reconnect check
+        # Show background logos initially
+        self._maybe_render_bg(0)
+        self._maybe_render_bg(1)
+
+        # Audio state
+        self.audio_enabled_var = tk.BooleanVar(value=False)
+        self.audio_device_var = tk.StringVar(value="")
+        self._audio_recorder: Optional[AudioRecorder] = None
+        self._audio_recording_path: Optional[str] = None
+        self._audio_test_window: Optional[tk.Toplevel] = None
+        self._audio_meter: Optional[AudioLevelMeter] = None
+        self._audio_level_var = tk.DoubleVar(value=0.0)
+        # Event notes persistence map loaded from settings
+        self._notes_map: Dict[str, str] = {}
 
     # ------------------------------------------------------------------
     # UI construction
@@ -238,11 +258,13 @@ class CameraApp:
 
         self.frame_label1 = ttk.Label(self.video_area)
         self.frame_label1.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
+        self.frame_label1.bind("<Configure>", lambda _e: self._maybe_render_bg(0))
         self.frame_label1.bind("<Button-1>", lambda e: self._on_video_click(0, e))
         self.frame_label1.bind("<B1-Motion>", lambda e: self._on_video_drag(0, e))
         
         self.frame_label2 = ttk.Label(self.video_area)
         self.frame_label2.grid(row=0, column=1, sticky="nsew", padx=6, pady=6)
+        self.frame_label2.bind("<Configure>", lambda _e: self._maybe_render_bg(1))
         self.frame_label2.bind("<Button-1>", lambda e: self._on_video_click(1, e))
         self.frame_label2.bind("<B1-Motion>", lambda e: self._on_video_drag(1, e))
 
@@ -308,10 +330,14 @@ class CameraApp:
         ttk.Button(controls, text="0.5x", command=lambda: self._set_playback_speed(0.5)).pack(side=tk.LEFT, padx=4)
         ttk.Button(controls, text="1x", command=lambda: self._set_playback_speed(1.0)).pack(side=tk.LEFT, padx=4)
         ttk.Button(controls, text="2x", command=lambda: self._set_playback_speed(2.0)).pack(side=tk.LEFT, padx=4)
+        ttk.Button(controls, text="Näytä kooste", command=self.playback_show_compilation).pack(side=tk.LEFT, padx=12)
+        ttk.Button(controls, text="Näytä kooste valituista", command=self.playback_show_compilation_selected).pack(side=tk.LEFT, padx=4)
         ttk.Label(controls, textvariable=self.playback_state, foreground=PALETTE["muted"]).pack(side=tk.RIGHT)
 
         self.playback_label = ttk.Label(playback_panel)
-        self.playback_label.pack()
+        self.playback_label.pack(fill=tk.BOTH, expand=True)
+        # Re-render frame to fit when resized
+        self.playback_label.bind("<Configure>", lambda _e: self._rerender_playback_image())
 
     def _build_settings_tab(self) -> None:
         outer = ttk.Frame(self.settings_tab)
@@ -363,6 +389,17 @@ class CameraApp:
                         variable=self.autoreconnect_var, 
                         command=self._on_autoreconnect_change).pack(side=tk.LEFT, padx=8, pady=8)
         
+        # Audio settings
+        audio_frame = ttk.Labelframe(outer, text="Ääni")
+        audio_frame.pack(fill=tk.X, padx=8, pady=8)
+        ttk.Checkbutton(audio_frame, text="Tallenna ääni", variable=self.audio_enabled_var, command=self._save_settings).pack(side=tk.LEFT)
+        ttk.Label(audio_frame, text="  Äänitulo:").pack(side=tk.LEFT, padx=(12, 4))
+        self.audio_devices_combo = ttk.Combobox(audio_frame, width=36, state="readonly", textvariable=self.audio_device_var)
+        self.audio_devices_combo.pack(side=tk.LEFT)
+        self.audio_devices_combo.bind("<<ComboboxSelected>>", lambda _e: self._save_settings())
+        ttk.Button(audio_frame, text="Päivitä", command=self._refresh_audio_devices).pack(side=tk.LEFT, padx=6)
+        ttk.Button(audio_frame, text="Testaa ääni", command=self._open_audio_test).pack(side=tk.LEFT, padx=6)
+        
         # Hotkeys display
         hotkeys_frame = ttk.Labelframe(outer, text="Pikanäppäimet")
         hotkeys_frame.pack(fill=tk.X, padx=8, pady=8)
@@ -382,6 +419,9 @@ class CameraApp:
         self.settings_status_var = tk.StringVar(value="")
         ttk.Label(save_frame, textvariable=self.settings_status_var,
                   foreground=PALETTE["success"]).pack(side=tk.LEFT, padx=(12, 0))
+
+        # Populate audio devices after UI exists
+        self._refresh_audio_devices()
 
         ttk.Label(outer, text="Kamerajärjestelmä by AnomFIN",
                   foreground=PALETTE["muted"]).pack(anchor=tk.E, pady=(12, 0))
@@ -502,6 +542,8 @@ class CameraApp:
                 # IP camera
                 url = source.get_opencv_url()
                 self.logger.info(f"Opening IP camera: {url}")
+                # Tweak FFmpeg RTSP options to avoid long stalls
+                apply_rtsp_defaults()
                 cap = cv2.VideoCapture(url)
                 cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Reduce latency for IP cameras
                 self.camera_sources[slot] = source
@@ -523,6 +565,26 @@ class CameraApp:
                     messagebox.showwarning("Kamera", f"Kamera {slot + 1} ei vastaa. Tarkista USB-liitäntä.")
                 return
                 
+            # For IP cameras, verify that frames can be read to avoid a blank view
+            if isinstance(source, IPCamera):
+                start_t = time.time()
+                ok_test = False
+                while time.time() - start_t < 2.0:
+                    ok_read, _ = cap.read()
+                    if ok_read:
+                        ok_test = True
+                        break
+                    time.sleep(0.1)
+                if not ok_test:
+                    self.status_var.set(f"Kamera {slot + 1}: ei videota (RTSP/HTTP)")
+                    try:
+                        cap.release()
+                    except Exception:
+                        pass
+                    self.caps[slot] = None
+                    messagebox.showwarning("Kamera", f"IP-kamerasta ei tule kuvaa. Tarkista URL/kirjautuminen.")
+                    return
+
             self.caps[slot] = cap
             self.status_var.set("Live-katselu käynnissä")
         except Exception as e:
@@ -537,6 +599,11 @@ class CameraApp:
                 self.logger.warning("cap-release-failed", exc_info=True)
         self.caps[slot] = None
         self.indices[slot] = None
+        # Clear current frame and show background
+        self.frame_imgs[slot] = None
+        label = self.frame_label1 if slot == 0 else self.frame_label2
+        label.configure(image="")
+        self._maybe_render_bg(slot)
     
     # ------------------------------------------------------------------
     # Frame pipeline
@@ -629,10 +696,28 @@ class CameraApp:
             duration=None,
             persons_max=0,
         )
+        # Apply persisted note if present
+        if event.path in self._notes_map:
+            event.note = self._notes_map[event.path]
         self.events.append(event)
         self.refresh_events_view()
         self._enforce_storage_limit()
         self.logger.info("event-start", extra={"path": event.path})
+        # Start audio recording if enabled and available
+        try:
+            if self.audio_enabled_var.get() and self._audio_recorder is None:
+                audio_path = Path(event.path).with_suffix('.wav')
+                device = self.audio_device_var.get() or None
+                self._audio_recorder = AudioRecorder(device=device if device else None)
+                self._audio_recorder.start(str(audio_path))
+                self._audio_recording_path = str(audio_path)
+                self.logger.info("audio-recording-start", extra={"path": str(audio_path)})
+        except AudioUnavailableError:
+            self._show_toast("Äänitystä ei voi aloittaa (sounddevice puuttuu)", error=True)
+            self._audio_recorder = None
+            self._audio_recording_path = None
+        except Exception:
+            self.logger.warning("audio-recording-start-failed", exc_info=True)
 
     def _handle_finished_event(self, data: Dict[str, Any]) -> None:
         for event in reversed(self.events):
@@ -644,6 +729,14 @@ class CameraApp:
         self.refresh_events_view()
         self._update_usage_label()
         self.logger.info("event-end", extra={"path": data.get("path"), "duration": data.get("duration")})
+        # Stop audio recording if active
+        try:
+            if self._audio_recorder is not None:
+                self._audio_recorder.stop()
+                self.logger.info("audio-recording-stop", extra={"path": self._audio_recording_path})
+        finally:
+            self._audio_recorder = None
+            self._audio_recording_path = None
 
     # ------------------------------------------------------------------
     # Playback
@@ -658,6 +751,13 @@ class CameraApp:
         self.playback_last_tick = now
         ok, frame = self.playback_vc.read()
         if not ok:
+            # If playing a compilation, advance to next file
+            if self.playback_playlist and (self.playback_playlist_index + 1) < len(self.playback_playlist):
+                self.playback_playlist_index += 1
+                next_path = self.playback_playlist[self.playback_playlist_index]
+                if self._open_playback_path(next_path):
+                    return
+            # Otherwise stop
             try:
                 self.playback_vc.release()
             except Exception:
@@ -666,15 +766,11 @@ class CameraApp:
             self.playback_state.set("stopped")
             self.playback_label.configure(image="")
             self.playback_img = None
+            self.playback_last_frame_bgr = None
             return
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        h, w, _ = frame_rgb.shape
-        scale = min(960 / w, 540 / h, 1.0)
-        if scale < 1.0:
-            frame_rgb = cv2.resize(frame_rgb, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
-        img = Image.fromarray(frame_rgb)
-        self.playback_img = ImageTk.PhotoImage(image=img)
-        self.playback_label.configure(image=self.playback_img)
+        # Render frame scaled to fit the available area
+        self.playback_last_frame_bgr = frame
+        self._render_playback_frame(frame)
 
     def _set_playback_speed(self, speed: float) -> None:
         self.playback_speed.set(max(0.1, min(4.0, speed)))
@@ -682,11 +778,22 @@ class CameraApp:
 
     def playback_play(self) -> None:
         try:
-            if self.playback_path and (self.playback_vc is None or not self.playback_vc.isOpened()):
-                self.playback_vc = cv2.VideoCapture(self.playback_path)
             if self.playback_vc is None or not self.playback_vc.isOpened():
-                messagebox.showwarning("Toisto", "Tallennetta ei voitu avata. Valitse tallenne listasta.")
-                return
+                # If compilation is prepared, open current item
+                if self.playback_playlist:
+                    if not self.playback_playlist:
+                        messagebox.showinfo("Huom", "Ei tallenteita koosteeseen.")
+                        return
+                    if not self._open_playback_path(self.playback_playlist[self.playback_playlist_index]):
+                        messagebox.showerror("Virhe", "Koosteen avaus epäonnistui")
+                        return
+                elif self.playback_path:
+                    if not self._open_playback_path(self.playback_path):
+                        messagebox.showwarning("Toisto", "Tallennetta ei voitu avata. Valitse tallenne listasta.")
+                        return
+                else:
+                    messagebox.showwarning("Toisto", "Valitse tallenne listasta.")
+                    return
             self.playback_state.set(f"playing @{self.playback_speed.get():.1f}x")
             self.playback_last_tick = 0.0
         except Exception as e:
@@ -707,6 +814,9 @@ class CameraApp:
         self.playback_state.set("stopped")
         self.playback_label.configure(image="")
         self.playback_img = None
+        self.playback_last_frame_bgr = None
+        self.playback_playlist = None
+        self.playback_playlist_index = 0
 
     def on_select_event(self, _event=None) -> None:
         selection = self.events_view.selection()
@@ -715,6 +825,9 @@ class CameraApp:
         path = selection[0]
         self.playback_stop()
         self.playback_path = path
+        # Clear any active compilation when a specific file is selected
+        self.playback_playlist = None
+        self.playback_playlist_index = 0
         self.playback_vc = cv2.VideoCapture(path)
         if not self.playback_vc.isOpened():
             messagebox.showerror("Virhe", "Tallenteen avaaminen epäonnistui")
@@ -722,6 +835,160 @@ class CameraApp:
             return
         self.playback_state.set("paused")
         self.notebook.select(self.events_tab)
+
+    # ------------------------------------------------------------------
+    # Playback helpers and compilation
+    def _open_playback_path(self, path: str) -> bool:
+        """Open a video file for playback. Returns True on success."""
+        try:
+            if self.playback_vc is not None:
+                try:
+                    self.playback_vc.release()
+                except Exception:
+                    self.logger.warning("playback-release-failed", exc_info=True)
+            self.playback_vc = cv2.VideoCapture(path)
+            if not self.playback_vc.isOpened():
+                self.playback_vc = None
+                return False
+            self.playback_path = path
+            self.playback_last_tick = 0.0
+            return True
+        except Exception:
+            self.logger.error("open-playback-path-failed", extra={"path": path}, exc_info=True)
+            return False
+
+    def playback_show_compilation(self) -> None:
+        """Play all recordings back-to-back with current speed."""
+        try:
+            if not self.events:
+                messagebox.showinfo("Huom", "Ei tallenteita koosteeseen.")
+                return
+            # Sort by start timestamp; fallback to mtime
+            def sort_key(e: EventItem):
+                if e.start:
+                    return e.start
+                try:
+                    return datetime.fromtimestamp(Path(e.path).stat().st_mtime)
+                except Exception:
+                    return datetime.min
+            paths = [e.path for e in sorted(self.events, key=sort_key)]
+            existing = [p for p in paths if Path(p).exists()]
+            if not existing:
+                messagebox.showinfo("Huom", "Yhtään tallennetta ei löytynyt levyltä.")
+                return
+            self.playback_playlist = existing
+            self.playback_playlist_index = 0
+            if not self._open_playback_path(self.playback_playlist[0]):
+                messagebox.showerror("Virhe", "Koosteen käynnistys epäonnistui")
+                return
+            self.playback_state.set(f"playing @{self.playback_speed.get():.1f}x")
+        except Exception:
+            self.logger.error("compilation-play-failed", exc_info=True)
+            messagebox.showerror("Virhe", "Koosteen toisto epäonnistui")
+
+    def playback_show_compilation_selected(self) -> None:
+        """Play only selected recordings back-to-back."""
+        try:
+            selection = list(self.events_view.selection())
+            if not selection:
+                messagebox.showinfo("Huom", "Valitse tallenteita listasta.")
+                return
+            # Build list preserving the visual order in the treeview
+            # and fallback sort by timestamp if needed
+            selected_paths = selection
+            # Filter to existing files
+            existing = [p for p in selected_paths if Path(p).exists()]
+            if not existing:
+                messagebox.showinfo("Huom", "Valittuja tiedostoja ei löydy.")
+                return
+            self.playback_playlist = existing
+            self.playback_playlist_index = 0
+            if not self._open_playback_path(self.playback_playlist[0]):
+                messagebox.showerror("Virhe", "Koosteen käynnistys epäonnistui")
+                return
+            self.playback_state.set(f"playing @{self.playback_speed.get():.1f}x")
+            self.notebook.select(self.events_tab)
+        except Exception:
+            self.logger.error("compilation-selected-play-failed", exc_info=True)
+            messagebox.showerror("Virhe", "Valittujen koosteen toisto epäonnistui")
+
+    def _render_playback_frame(self, frame_bgr: np.ndarray) -> None:
+        """Render playback frame scaled to fit the playback label area."""
+        try:
+            h, w = frame_bgr.shape[:2]
+            avail_w = max(1, self.playback_label.winfo_width())
+            avail_h = max(1, self.playback_label.winfo_height())
+            if avail_w <= 1 or avail_h <= 1:
+                avail_w, avail_h = 960, 540
+            scale = min(avail_w / w, avail_h / h, 1.0)
+            new_w, new_h = max(1, int(w * scale)), max(1, int(h * scale))
+            display = cv2.resize(frame_bgr, (new_w, new_h), interpolation=cv2.INTER_AREA)
+            frame_rgb = cv2.cvtColor(display, cv2.COLOR_BGR2RGB)
+            img = Image.fromarray(frame_rgb)
+            self.playback_img = ImageTk.PhotoImage(image=img)
+            self.playback_label.configure(image=self.playback_img)
+        except Exception:
+            self.logger.error("render-playback-frame-failed", exc_info=True)
+
+    def _rerender_playback_image(self) -> None:
+        if self.playback_last_frame_bgr is not None:
+            self._render_playback_frame(self.playback_last_frame_bgr)
+        else:
+            self._render_logo_background(self.playback_label)
+
+    def _maybe_render_bg(self, slot: int) -> None:
+        try:
+            label = self.frame_label1 if slot == 0 else self.frame_label2
+            if self.caps[slot] is None and self.frame_imgs[slot] is None:
+                self._render_logo_background(label)
+        except Exception:
+            pass
+
+    def _render_logo_background(self, label: ttk.Label) -> None:
+        """Render the logo as a centered background to the given label."""
+        try:
+            avail_w = max(1, label.winfo_width())
+            avail_h = max(1, label.winfo_height())
+            if avail_w <= 1 or avail_h <= 1:
+                return
+            # Fallback dark background
+            bg = np.zeros((avail_h, avail_w, 3), dtype=np.uint8)
+            bg[:] = (20, 20, 30)
+
+            # Use loaded logo if available
+            if self.logo_bgra is not None:
+                logo = self.logo_bgra
+                # Convert BGRA/BGR to BGR for compositing
+                if logo.shape[2] == 4:
+                    logo_bgr = cv2.cvtColor(logo, cv2.COLOR_BGRA2BGR)
+                    alpha = logo[:, :, 3].astype(np.float32) / 255.0
+                else:
+                    logo_bgr = logo
+                    alpha = np.ones(logo_bgr.shape[:2], dtype=np.float32)
+                # Scale logo to fit ~40% width / 60% height
+                target_w = max(1, int(avail_w * 0.4))
+                scale = min(target_w / logo_bgr.shape[1], (avail_h * 0.6) / logo_bgr.shape[0])
+                new_w = max(1, int(logo_bgr.shape[1] * scale))
+                new_h = max(1, int(logo_bgr.shape[0] * scale))
+                logo_resized = cv2.resize(logo_bgr, (new_w, new_h), interpolation=cv2.INTER_AREA)
+                alpha_resized = cv2.resize(alpha, (new_w, new_h), interpolation=cv2.INTER_AREA)
+                # Center position
+                x = (avail_w - new_w) // 2
+                y = (avail_h - new_h) // 2
+                roi = bg[y:y+new_h, x:x+new_w]
+                for c in range(3):
+                    roi[..., c] = (alpha_resized * logo_resized[..., c] + (1.0 - alpha_resized) * roi[..., c]).astype(np.uint8)
+                bg[y:y+new_h, x:x+new_w] = roi
+
+            # Convert to Tk image
+            rgb = cv2.cvtColor(bg, cv2.COLOR_BGR2RGB)
+            im = Image.fromarray(rgb)
+            tkimg = ImageTk.PhotoImage(image=im)
+            label.configure(image=tkimg)
+            # Keep reference to prevent GC
+            label._bg_image = tkimg  # type: ignore[attr-defined]
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Recording list
@@ -771,6 +1038,9 @@ class CameraApp:
                         duration=duration,
                         persons_max=0,
                     )
+                    # Apply persisted note if present
+                    if event.path in self._notes_map:
+                        event.note = self._notes_map[event.path]
                     self.events.append(event)
                 except Exception:
                     self.logger.warning("load-recording-failed", extra={"path": str(file_path)}, exc_info=True)
@@ -816,6 +1086,8 @@ class CameraApp:
                             duration=None,
                             persons_max=0,
                         )
+                        if event.path in self._notes_map:
+                            event.note = self._notes_map[event.path]
                         self.events.append(event)
                     except Exception:
                         self.logger.warning("watch-add-failed", extra={"path": str(file_path)}, exc_info=True)
@@ -832,7 +1104,7 @@ class CameraApp:
         for item in self.events_view.get_children():
             self.events_view.delete(item)
         for event in self.events:
-            start_str = format_timestamp(event.start) if event.start else ""
+            start_str = format_timestamp_relative(event.start) if event.start else ""
             dur = f"{event.duration:.1f}" if event.duration else ""
             persons = str(event.persons_max or 0)
             self.events_view.insert("", tk.END, iid=event.path, values=(event.name, start_str, dur, persons, event.note))
@@ -848,8 +1120,14 @@ class CameraApp:
         for event in self.events:
             if event.path == selection[0]:
                 event.note = note.strip()
+                # Update note map and persist
+                if event.note:
+                    self._notes_map[event.path] = event.note
+                elif event.path in self._notes_map:
+                    self._notes_map.pop(event.path, None)
                 break
         self.refresh_events_view()
+        self._save_settings()
 
     def _delete_selected_recordings(self) -> None:
         """Delete selected recording(s) with confirmation."""
@@ -891,6 +1169,7 @@ class CameraApp:
             self.refresh_events_view()
             self._update_usage_label()
             self._show_toast(f"{deleted_count} tallenne{'tta' if deleted_count > 1 else ''} poistettu", error=False)
+            self._save_settings()
 
     def _delete_all_recordings(self) -> None:
         """Delete all recordings with confirmation."""
@@ -915,6 +1194,7 @@ class CameraApp:
         self.refresh_events_view()
         self._update_usage_label()
         self._show_toast(f"{deleted_count} tallennetta poistettu", error=False)
+        self._save_settings()
 
     # ------------------------------------------------------------------
     # Settings & persistence
@@ -926,6 +1206,13 @@ class CameraApp:
             data = json.loads(Path(self._settings_path()).read_text(encoding="utf-8"))
         except Exception:
             return
+        # Ensure audio/notes state exists even if called early in __init__
+        if not hasattr(self, 'audio_enabled_var'):
+            self.audio_enabled_var = tk.BooleanVar(value=False)
+        if not hasattr(self, 'audio_device_var'):
+            self.audio_device_var = tk.StringVar(value="")
+        if not hasattr(self, '_notes_map'):
+            self._notes_map = {}
         self.storage_limit_gb.set(float(data.get("storage_limit_gb", self.storage_limit_gb.get())))
         self.logo_path = data.get("logo_path") or self.logo_path
         self.logo_alpha.set(float(data.get("logo_alpha", self.logo_alpha.get())))
@@ -936,6 +1223,17 @@ class CameraApp:
             reconnect_enabled = data["autoreconnect"]
             for state in self.reconnect_states:
                 state.enabled = reconnect_enabled
+        # Audio settings
+        self.audio_enabled_var.set(bool(data.get("audio_enabled", self.audio_enabled_var.get())))
+        self.audio_device_var.set(str(data.get("audio_device", self.audio_device_var.get())))
+        # Notes map for persistence
+        try:
+            notes = data.get("event_notes", {})
+            if isinstance(notes, dict):
+                self._notes_map = {str(k): str(v) for k, v in notes.items()}
+        except Exception:
+            self._notes_map = {}
+        # Populate devices after UI is built
         # Load IP cameras
         if "ip_cameras" in data:
             for cam_data in data["ip_cameras"]:
@@ -963,6 +1261,9 @@ class CameraApp:
             "hotkeys": self.hotkeys.to_dict(),
             "autoreconnect": self.reconnect_states[0].enabled,
             "ip_cameras": self._serialize_ip_cameras(),
+            "audio_enabled": bool(self.audio_enabled_var.get()),
+            "audio_device": self.audio_device_var.get(),
+            "event_notes": {e.path: e.note for e in self.events if (e.note or "").strip()},
         }
         try:
             # Atomic write: write to temp file then rename
@@ -971,6 +1272,13 @@ class CameraApp:
             temp_path.replace(self._settings_path())
         except Exception:
             self.logger.warning("settings-save-failed", exc_info=True)
+
+        # If audio device list is empty in UI, try to populate lazily
+        try:
+            if hasattr(self, 'audio_devices_combo') and not self.audio_devices_combo['values']:
+                self._refresh_audio_devices()
+        except Exception:
+            pass
     
     def _serialize_ip_cameras(self) -> List[Dict[str, Any]]:
         """Serialize IP cameras for JSON storage.
@@ -1153,6 +1461,74 @@ class CameraApp:
         pct = format_percentage(used, limit_b)
         self.usage_label_var.set(f"Käyttöaste: {pct}, {format_bytes(used)} / {format_bytes(limit_b)}")
 
+    def _refresh_audio_devices(self) -> None:
+        """Populate audio input devices into the combo box."""
+        try:
+            devices = list_input_devices()
+            names = [d.name for d in devices]
+            if hasattr(self, 'audio_devices_combo'):
+                self.audio_devices_combo['values'] = names
+                # Keep selection if still present
+                current = self.audio_device_var.get()
+                if current in names:
+                    self.audio_devices_combo.set(current)
+                elif names:
+                    self.audio_devices_combo.set(names[0])
+                    self.audio_device_var.set(names[0])
+            self._save_settings()
+        except AudioUnavailableError:
+            if hasattr(self, 'audio_devices_combo'):
+                self.audio_devices_combo['values'] = []
+            self._show_toast("Äänilaitteita ei saatavilla (asennetaanko sounddevice?)", error=True)
+
+    def _open_audio_test(self) -> None:
+        """Open a small modal that shows audio input level bars."""
+        if self._audio_test_window and self._audio_test_window.winfo_exists():
+            self._audio_test_window.lift()
+            return
+        try:
+            device = self.audio_device_var.get() or None
+            self._audio_meter = AudioLevelMeter(device=device)
+            self._audio_meter.start()
+        except AudioUnavailableError:
+            messagebox.showerror("Ääni", "Äänitesti ei toimi: sounddevice ei ole asennettu. Asenna: pip install sounddevice")
+            return
+        except Exception as exc:
+            messagebox.showerror("Ääni", f"Äänitesti epäonnistui: {exc}")
+            return
+        win = tk.Toplevel(self.root)
+        win.title("Äänitesti")
+        win.geometry("360x120")
+        win.transient(self.root)
+        win.grab_set()
+        self._audio_test_window = win
+        ttk.Label(win, text="Puhu mikrofoniin – palkki reagoi").pack(pady=(12, 6))
+        bar = ttk.Progressbar(win, orient=tk.HORIZONTAL, mode='determinate', length=300, maximum=100)
+        bar.pack(pady=8)
+
+        def tick():
+            if not win.winfo_exists():
+                return
+            try:
+                lvl = self._audio_meter.get_level() if self._audio_meter else 0.0
+                # Map RMS ~[0, 0.3] to 0..100
+                val = max(0.0, min(100.0, (lvl / 0.3) * 100.0))
+                bar['value'] = val
+            except Exception:
+                pass
+            win.after(50, tick)
+
+        def on_close():
+            try:
+                if self._audio_meter:
+                    self._audio_meter.stop()
+            finally:
+                self._audio_meter = None
+                win.destroy()
+
+        win.protocol("WM_DELETE_WINDOW", on_close)
+        tick()
+
     def _tick_usage(self) -> None:
         self._update_usage_label()
         if self.root.winfo_exists():
@@ -1284,6 +1660,10 @@ class CameraApp:
         for state in self.reconnect_states:
             state.enabled = enabled
         self._save_settings()
+
+    # Legacy alias kept for backward compatibility in settings
+    def _on_toggle_autoreconnect(self) -> None:
+        self._on_autoreconnect_change()
     
     def _delete_selected_recording(self) -> None:
         """Delete selected recording(s) from list."""

@@ -15,11 +15,12 @@ import threading
 import time
 from dataclasses import dataclass
 from typing import List, Optional, Callable
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
 
 import requests
 
 from src.utils.opencv_loader import OpenCVUnavailableError, get_cv2
+from src.utils.ffmpeg_opts import apply_rtsp_defaults
 
 # From raw data to real impact.
 
@@ -48,11 +49,28 @@ class IPCamera:
     
     def get_opencv_url(self) -> str:
         """Generate OpenCV-compatible URL with credentials if provided."""
-        if self.username and self.password:
-            # Insert credentials into URL
-            parsed = urlparse(self.url)
-            if parsed.scheme in ('rtsp', 'http', 'https'):
-                return f"{parsed.scheme}://{self.username}:{self.password}@{parsed.netloc}{parsed.path}"
+        parsed = urlparse(self.url)
+        # If URL already contains credentials, return as-is
+        if parsed.username or parsed.password:
+            return self.url
+
+        # Otherwise, inject credentials if provided and scheme is supported
+        if self.username and self.password and parsed.scheme in ("rtsp", "http", "https"):
+            # Build netloc with optional port
+            host_port = parsed.netloc
+            # In case netloc is empty (rare), rebuild from ip/port
+            if not host_port:
+                host_port = f"{self.ip}:{self.port}" if self.ip and self.port else ""
+            # Preserve path, parameters, query if present
+            path = parsed.path or ""
+            if parsed.params:
+                path = f"{path};{parsed.params}"
+            if parsed.query:
+                path = f"{path}?{parsed.query}"
+            user_enc = quote(self.username, safe="")
+            pass_enc = quote(self.password, safe="")
+            return f"{parsed.scheme}://{user_enc}:{pass_enc}@{host_port}{path}"
+
         return self.url
 
 
@@ -84,9 +102,14 @@ def test_rtsp_connection(ip: str, port: int, username: str = "", password: str =
         )
         return None
     
+    # Apply sane FFmpeg options to avoid 30s stalls
+    apply_rtsp_defaults()
+
     for test_path in paths_to_try:
         if username and password:
-            url = f"rtsp://{username}:{password}@{ip}:{port}{test_path}"
+            user_enc = quote(username, safe="")
+            pass_enc = quote(password, safe="")
+            url = f"rtsp://{user_enc}:{pass_enc}@{ip}:{port}{test_path}"
             log_url = f"rtsp://{username}:***@{ip}:{port}{test_path}"
         else:
             url = f"rtsp://{ip}:{port}{test_path}"
@@ -167,7 +190,9 @@ def test_http_mjpeg(ip: str, port: int, username: str = "", password: str = "",
             if response.status_code in (200, 206):
                 # Test if OpenCV can open it
                 if username and password:
-                    opencv_url = f"http://{username}:{password}@{ip}:{port}{test_path}"
+                    user_enc = quote(username, safe="")
+                    pass_enc = quote(password, safe="")
+                    opencv_url = f"http://{user_enc}:{pass_enc}@{ip}:{port}{test_path}"
                 else:
                     opencv_url = url
 

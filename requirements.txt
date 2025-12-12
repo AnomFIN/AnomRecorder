@@ -12,6 +12,7 @@ requests==2.32.3
 numpy==2.3.4
 Pillow==12.0.0
 send2trash==1.8.3
+sounddevice
 
 # Build / packaging
 pyinstaller==6.10.0

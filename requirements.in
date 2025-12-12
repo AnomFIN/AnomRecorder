@@ -16,6 +16,8 @@ Pillow==12.0.0
 pyinstaller==6.10.0
 pip-tools==7.4.1
 
+# Audio (microphone) support — include by default for convenience
+sounddevice
+
 # Optional extras are NOT added here to keep minimal hard deps.
 # - ffmpeg: detected dynamically via PATH or vendor/ffmpeg/
-# - audio (sounddevice or pyaudio): gated behind feature flag and optional

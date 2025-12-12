@@ -4,7 +4,7 @@ from datetime import datetime
 
 import pytest
 
-from src.core.humanize import format_bytes, format_percentage, format_timestamp
+from src.core.humanize import format_bytes, format_percentage, format_timestamp, format_timestamp_relative
 
 
 def test_format_bytes_scaling():
@@ -30,3 +30,17 @@ def test_format_percentage():
 def test_format_timestamp():
     ts = datetime(2024, 2, 29, 12, 30, 45)
     assert format_timestamp(ts) == "2024-02-29 12:30:45"
+
+
+def test_format_timestamp_relative_today_and_yesterday():
+    now = datetime(2025, 12, 10, 15, 0, 0)
+    ts_today = datetime(2025, 12, 10, 9, 5, 0)
+    ts_yesterday = datetime(2025, 12, 9, 22, 0, 0)
+    assert format_timestamp_relative(ts_today, now=now).startswith("tänään ")
+    assert format_timestamp_relative(ts_yesterday, now=now).startswith("eilen ")
+
+
+def test_format_timestamp_relative_days():
+    now = datetime(2025, 12, 10, 15, 0, 0)
+    ts_4d = datetime(2025, 12, 6, 10, 0, 0)
+    assert format_timestamp_relative(ts_4d, now=now) == "4pv sitten"
