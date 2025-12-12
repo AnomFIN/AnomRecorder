@@ -29,6 +29,8 @@ tests/             # Pytest-yksikkötestit
 ### Automaattinen asennus (suositeltu)
 Käytä reaktiivista asennusohjelmaa, joka asentaa kaikki riippuvuudet, testaa asennuksen ja korjaa automaattisesti virheet:
 
+> GUI käynnistää asennuksen automaattisesti heti kun järjestelmätarkistus valmistuu – erillistä "Start"-painallusta ei tarvita.
+
 **Windows:**
 ```batch
 install_dependencies.bat
