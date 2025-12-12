@@ -264,7 +264,7 @@ class InstallerGUI:
             return
         self.installation_started = True
         self.log("\nAuto-starting installation to complete setup without extra clicks.")
-        # Call start_installation without it checking the flag again
+        # Call _do_installation directly to avoid duplicate flag check
         self._do_installation()
     
     def start_installation(self):

@@ -90,11 +90,11 @@ class TestInstallerAutoStart(unittest.TestCase):
                 installer = self.install_module.InstallerGUI(root_mock)
                 installer.python_version_ok = False
                 installer.installation_started = False
-                installer.start_installation = Mock()
+                installer._do_installation = Mock()
                 
                 # Call should be blocked
                 installer.auto_start_installation()
-                installer.start_installation.assert_not_called()
+                installer._do_installation.assert_not_called()
 
     @patch('install.GUI_AVAILABLE', True)
     def test_installation_started_flag_set_before_start(self):
