@@ -237,12 +237,8 @@ class InstallerGUI:
                 else:
                     raise Exception("pip is not available")
                 
-                # Enable install button
-                self.progress_bar.stop()
-                self.progress_label.config(text="System check complete - Ready to install")
-                self.install_button.config(state=tk.NORMAL)
-                self.log("\n✓ System check complete. Click 'Start Installation' to continue.")
-                self.root.after(300, self.auto_start_installation)
+                # Schedule GUI updates on main thread
+                self.root.after(0, self._complete_system_check)
 
             except Exception as e:
                 self.progress_bar.stop()
@@ -251,11 +247,21 @@ class InstallerGUI:
                 messagebox.showerror("System Check Failed", str(e))
 
         threading.Thread(target=check, daemon=True).start()
+    
+    def _complete_system_check(self):
+        """Complete system check and enable installation (called on main thread)."""
+        self.progress_bar.stop()
+        self.progress_label.config(text="System check complete - Ready to install")
+        self.install_button.config(state=tk.NORMAL)
+        self.log("\n✓ System check complete. Click 'Start Installation' to continue.")
+        # Auto-start after a short delay
+        self.root.after(300, self.auto_start_installation)
 
     def auto_start_installation(self):
         """Start installation automatically after checks."""
         if self.installation_started or not self.python_version_ok:
             return
+        self.installation_started = True
         self.log("\nAuto-starting installation to complete setup without extra clicks.")
         self.start_installation()
 
