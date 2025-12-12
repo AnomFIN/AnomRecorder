@@ -60,6 +60,23 @@ def test_ip_camera_opencv_url_without_credentials():
     assert opencv_url == "rtsp://192.168.1.100:554/stream"
 
 
+def test_ip_camera_opencv_url_encodes_special_chars():
+    """Username/password with special chars are URL-encoded in userinfo."""
+    camera = IPCamera(
+        name="Test Camera",
+        url="rtsp://192.168.1.100:554/cam/realmonitor?channel=1&subtype=0",
+        protocol="rtsp",
+        ip="192.168.1.100",
+        port=554,
+        username="ad min",
+        password="p@ss:!/#"
+    )
+
+    opencv_url = camera.get_opencv_url()
+    # Expect percent-encoding for space, @, :, !, /, # in credentials
+    assert "ad%20min:p%40ss%3A%21%2F%23@" in opencv_url
+
+
 def test_get_local_network_range():
     """Test local network range generation."""
     with patch('socket.socket') as mock_socket:

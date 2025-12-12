@@ -1,0 +1,32 @@
+{
+  "storage_limit_gb": 5.0,
+  "logo_path": "/home/kali/Desktop/asd.png",
+  "logo_alpha": 0.25,
+  "motion_threshold": 0.05,
+  "hotkeys": {
+    "start_stop_recording": "space",
+    "refresh_live": "r",
+    "zoom_in": "plus",
+    "zoom_out": "minus",
+    "cancel": "Escape",
+    "pan_up": "Up",
+    "pan_down": "Down",
+    "pan_left": "Left",
+    "pan_right": "Right"
+  },
+  "autoreconnect": true,
+  "ip_cameras": [
+    {
+      "name": "Camera at 192.168.1.108:554",
+      "url": "rtsp://admin:Jeesus123!@192.168.1.108:554/cam/realmonitor?channel=1&subtype=0",
+      "protocol": "rtsp",
+      "ip": "192.168.1.108",
+      "port": 554,
+      "username": "admin",
+      "password": "Jeesus123!"
+    }
+  ],
+  "audio_enabled": false,
+  "audio_device": "Intel 82801AA-ICH: - (hw:0,0)",
+  "event_notes": {}
+}
