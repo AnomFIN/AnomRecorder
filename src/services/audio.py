@@ -139,6 +139,7 @@ class AudioRecorder:
                 try:
                     wf.close()
                 except Exception:
+                    # Ignore errors closing the wave file; file may already be closed or corrupted
                     pass
 
         self._thread = threading.Thread(target=writer, daemon=True)

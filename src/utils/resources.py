@@ -63,22 +63,24 @@ def find_user_logo_default() -> Optional[str]:
     """Return a user-specific default logo path if it exists.
 
     Preference order:
-    1) $HOME/downloads/logo.png
-    2) $HOME/Downloads/logo.png
-    3) Hardcoded Kali-like path /home/kali/downloads/logo.png (per user request)
+    1) $CUSTOM_LOGO_PATH (if set)
+    2) $HOME/downloads/logo.png
+    3) $HOME/Downloads/logo.png
     """
     try:
         home = os.path.expanduser("~")
     except Exception:
         home = None
     candidates: List[str] = []
+    # Check for a user-specified custom logo path via environment variable
+    custom_logo = os.environ.get("CUSTOM_LOGO_PATH")
+    if custom_logo:
+        candidates.append(custom_logo)
     if home:
         candidates += [
             os.path.join(home, "downloads", "logo.png"),
             os.path.join(home, "Downloads", "logo.png"),
         ]
-    # Explicit path requested by the user
-    candidates.append("/home/kali/downloads/logo.png")
     for cand in candidates:
         try:
             if os.path.exists(cand):

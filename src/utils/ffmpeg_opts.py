@@ -12,7 +12,6 @@ We apply sensible defaults to avoid long 30s timeouts and reduce latency.
 from __future__ import annotations
 
 import os
-from typing import Optional
 
 
 def _merge_options(base: str, extra: str) -> str:

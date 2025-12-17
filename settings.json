@@ -18,12 +18,12 @@
   "ip_cameras": [
     {
       "name": "Camera at 192.168.1.108:554",
-      "url": "rtsp://admin:Jeesus123!@192.168.1.108:554/cam/realmonitor?channel=1&subtype=0",
+      "url": "rtsp://<USERNAME>:<PASSWORD>@192.168.1.108:554/cam/realmonitor?channel=1&subtype=0",
       "protocol": "rtsp",
       "ip": "192.168.1.108",
       "port": 554,
-      "username": "admin",
-      "password": "Jeesus123!"
+      "username": "<USERNAME>",
+      "password": "<PASSWORD>"
     }
   ],
   "audio_enabled": false,
