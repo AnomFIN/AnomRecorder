@@ -59,4 +59,33 @@ def find_resource(rel_path: str) -> Optional[str]:
     return None
 
 
-__all__ = ["find_resource"]
+def find_user_logo_default() -> Optional[str]:
+    """Return a user-specific default logo path if it exists.
+
+    Preference order:
+    1) $HOME/downloads/logo.png
+    2) $HOME/Downloads/logo.png
+    3) Hardcoded Kali-like path /home/kali/downloads/logo.png (per user request)
+    """
+    try:
+        home = os.path.expanduser("~")
+    except Exception:
+        home = None
+    candidates: List[str] = []
+    if home:
+        candidates += [
+            os.path.join(home, "downloads", "logo.png"),
+            os.path.join(home, "Downloads", "logo.png"),
+        ]
+    # Explicit path requested by the user
+    candidates.append("/home/kali/downloads/logo.png")
+    for cand in candidates:
+        try:
+            if os.path.exists(cand):
+                return cand
+        except Exception:
+            continue
+    return None
+
+
+__all__ = ["find_resource", "find_user_logo_default"]
