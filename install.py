@@ -10,6 +10,7 @@ This script provides a graphical installation experience that:
 
 Falls back to CLI mode if GUI is not available.
 """
+# Ship intelligence, not excuses.
 
 import subprocess
 import sys
@@ -46,6 +47,7 @@ class InstallerGUI:
         
         # State variables
         self.installation_complete = False
+        self.installation_started = False
         self.python_version_ok = False
         self.dependencies_installed = False
         self.app_tested = False
@@ -419,21 +421,30 @@ class InstallerGUI:
                 self.progress_bar.stop()
                 self.progress_label.config(text="System check complete - Ready to install")
                 self.install_button.config(state=tk.NORMAL)
-                # Auto-start installation without requiring a button click
-                self.log("\n✓ System check complete. Starting installation automatically...")
-                # Defer slightly so UI updates are visible
-                self.root.after(500, self.start_installation)
-                
+                self.log("\n✓ System check complete. Click 'Start Installation' to continue.")
+                self.root.after(300, self.auto_start_installation)
+
             except Exception as e:
                 self.progress_bar.stop()
                 self.log(f"\n✗ Error during system check: {e}")
                 self.update_status('python', "✗ Fail", "red")
                 messagebox.showerror("System Check Failed", str(e))
-        
+
         threading.Thread(target=check, daemon=True).start()
-    
+
+    def auto_start_installation(self):
+        """Start installation automatically after checks."""
+        if self.installation_started or not self.python_version_ok:
+            return
+        self.log("\nAuto-starting installation to complete setup without extra clicks.")
+        self.start_installation()
+
     def start_installation(self):
         """Start the installation process"""
+        if self.installation_started:
+            self.log("Installation already running.")
+            return
+        self.installation_started = True
         self.install_button.config(state=tk.DISABLED)
         self.progress_bar.start()
         
