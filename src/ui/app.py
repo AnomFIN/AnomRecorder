@@ -753,7 +753,7 @@ class CameraApp:
         ok, frame = self.playback_vc.read()
         if not ok:
             # If playing a compilation, advance to next file
-            if self.playback_playlist and (self.playback_playlist_index + 1) < len(self.playback_playlist):
+            if self.playback_playlist is not None and (self.playback_playlist_index + 1) < len(self.playback_playlist):
                 self.playback_playlist_index += 1
                 next_path = self.playback_playlist[self.playback_playlist_index]
                 if self._open_playback_path(next_path):
