@@ -1217,7 +1217,12 @@ class CameraApp:
         if not hasattr(self, '_notes_map'):
             self._notes_map = {}
         self.storage_limit_gb.set(float(data.get("storage_limit_gb", self.storage_limit_gb.get())))
-        self.logo_path = data.get("logo_path") or self.logo_path
+        # Validate logo path exists before using it
+        loaded_logo_path = data.get("logo_path")
+        if loaded_logo_path and os.path.exists(loaded_logo_path):
+            self.logo_path = loaded_logo_path
+        elif loaded_logo_path:
+            self.logger.warning("settings-logo-path-invalid", extra={"path": loaded_logo_path})
         self.logo_alpha.set(float(data.get("logo_alpha", self.logo_alpha.get())))
         self.motion_threshold.set(float(data.get("motion_threshold", self.motion_threshold.get())))
         if "hotkeys" in data:
@@ -1372,6 +1377,10 @@ class CameraApp:
         path = self.logo_path
         if not path or not hasattr(self, 'logo_preview_label'):
             return
+        # Check if path exists before trying to load
+        if not os.path.exists(path):
+            self.logo_preview_label.configure(image="", text="Logo tiedostoa ei löytynyt")
+            return
         try:
             img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
             if img is None:
@@ -1403,6 +1412,10 @@ class CameraApp:
         self.logo_bgra = None
         if not path:
             return
+        # Validate path exists before attempting to load
+        if not os.path.exists(path):
+            self.logger.warning("logo-path-not-found", extra={"path": path})
+            return
         try:
             img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
             if img is None:
@@ -1415,7 +1428,6 @@ class CameraApp:
             self.logo_bgra = img
         except Exception as e:
             self.logger.error("logo-load-error", exc_info=True)
-            messagebox.showerror("Virhe", f"Logon lataus epäonnistui: {str(e)}")
 
     def _overlay_logo(self, frame_bgr: np.ndarray) -> np.ndarray:
         if self.logo_bgra is None:
