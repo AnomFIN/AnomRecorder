@@ -781,7 +781,7 @@ class CameraApp:
         try:
             if self.playback_vc is None or not self.playback_vc.isOpened():
                 # If compilation is prepared, open current item
-                if self.playback_playlist:
+                if self.playback_playlist is not None:
                     if len(self.playback_playlist) == 0:
                         messagebox.showinfo("Huom", "Ei tallenteita koosteeseen.")
                         return
