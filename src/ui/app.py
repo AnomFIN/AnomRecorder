@@ -580,6 +580,7 @@ class CameraApp:
                     try:
                         cap.release()
                     except Exception:
+                        # Ignore errors releasing capture; it may already be closed
                         pass
                     self.caps[slot] = None
                     messagebox.showwarning("Kamera", f"IP-kamerasta ei tule kuvaa. Tarkista URL/kirjautuminen.")
@@ -780,8 +781,8 @@ class CameraApp:
         try:
             if self.playback_vc is None or not self.playback_vc.isOpened():
                 # If compilation is prepared, open current item
-                if self.playback_playlist:
-                    if not self.playback_playlist:
+                if self.playback_playlist is not None:
+                    if len(self.playback_playlist) == 0:
                         messagebox.showinfo("Huom", "Ei tallenteita koosteeseen.")
                         return
                     if not self._open_playback_path(self.playback_playlist[self.playback_playlist_index]):
@@ -942,6 +943,7 @@ class CameraApp:
             if self.caps[slot] is None and self.frame_imgs[slot] is None:
                 self._render_logo_background(label)
         except Exception:
+            # Ignore errors rendering background; not critical if logo display fails
             pass
 
     def _render_logo_background(self, label: ttk.Label) -> None:
@@ -988,6 +990,7 @@ class CameraApp:
             # Keep reference to prevent GC
             label._bg_image = tkimg  # type: ignore[attr-defined]
         except Exception:
+            # Ignore errors rendering logo background; not critical if display fails
             pass
 
     # ------------------------------------------------------------------
