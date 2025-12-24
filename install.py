@@ -29,8 +29,6 @@ except ImportError:
     print("Note: GUI (tkinter) not available, using CLI mode")
 
 AUTO_START = "--start" in sys.argv
-
-AUTO_START = "--start" in sys.argv
 if "--venv" in sys.argv:
     DEFAULT_USE_VENV = True
 elif "--no-venv" in sys.argv:
@@ -91,6 +89,7 @@ class InstallerGUI:
                         if os.path.exists(p):
                             return p
                     except Exception:
+                        # Ignore errors (e.g., permission issues, missing directories) and continue searching for logo
                         pass
                 return None
             lp = _find_user_logo()
@@ -107,6 +106,7 @@ class InstallerGUI:
                 lbl.pack(pady=12)
                 logo_shown = True
         except Exception:
+            # Ignore all errors when loading the logo; fallback to text label if any issue occurs
             pass
         
         if not logo_shown:
@@ -301,6 +301,7 @@ class InstallerGUI:
                     try:
                         messagebox.showinfo("Relaunching", f"Relaunching installer with {alt}")
                     except Exception:
+                        # Ignore errors showing messagebox; not critical if notification fails
                         pass
                     os.execv(alt, [alt, __file__] + sys.argv[1:])
 
@@ -352,6 +353,7 @@ class InstallerGUI:
                         "Administrator privileges required. Run these in a terminal, then restart installer:\n\n" + manual
                     )
                 except Exception:
+                    # Ignore errors showing messagebox; manual commands are already logged
                     pass
                 self.log("pkexec not found; prompted user with manual commands.")
                 return
@@ -364,6 +366,7 @@ class InstallerGUI:
                     try:
                         messagebox.showinfo("Relaunching", f"Relaunching installer with {alt}")
                     except Exception:
+                        # Ignore errors showing messagebox; not critical if notification fails
                         pass
                     os.execv(alt, [alt, __file__] + sys.argv[1:])
 
@@ -371,12 +374,14 @@ class InstallerGUI:
             try:
                 messagebox.showwarning("Not Found", "Could not locate python3.12/3.11 after installation. Reopen the installer.")
             except Exception:
+                # Ignore errors if GUI is unavailable or messagebox fails; user has already been notified via log
                 pass
         except Exception as e:
             self.log(f"✗ Error during Python installation helper: {e}")
             try:
                 messagebox.showerror("Error", str(e))
             except Exception:
+                # Ignore errors showing error dialog; error is already logged
                 pass
     
     def check_system(self):
@@ -733,6 +738,7 @@ class InstallerGUI:
                     "Click 'Start App' to launch the application."
                 )
         except Exception:
+            # Ignore errors showing completion messagebox; user can see completion in log
             pass
 
         # Auto-start app if selected
@@ -741,6 +747,7 @@ class InstallerGUI:
                 self.log("Auto-start enabled. Launching app...")
                 self.root.after(250, self.launch_app)
         except Exception:
+            # Ignore errors checking auto-start; not critical if this feature fails
             pass
     
     def launch_app(self):
@@ -1124,7 +1131,7 @@ def main():
         # Try GUI mode
         try:
             root = tk.Tk()
-            app = InstallerGUI(root, auto_start=AUTO_START, use_venv=want_venv)
+            InstallerGUI(root, auto_start=AUTO_START, use_venv=want_venv)
             root.mainloop()
         except Exception as e:
             print(f"GUI mode failed: {e}")
