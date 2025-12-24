@@ -1261,9 +1261,14 @@ class CameraApp:
 
     def _save_settings(self) -> None:
         """Internal save without user feedback."""
+        # Only save logo path if it exists
+        logo_path_to_save = ""
+        if self.logo_path and os.path.exists(self.logo_path):
+            logo_path_to_save = self.logo_path
+        
         payload = {
             "storage_limit_gb": float(self.storage_limit_gb.get()),
-            "logo_path": self.logo_path or "",
+            "logo_path": logo_path_to_save,
             "logo_alpha": float(self.logo_alpha.get()),
             "motion_threshold": float(self.motion_threshold.get()),
             "hotkeys": self.hotkeys.to_dict(),
