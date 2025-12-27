@@ -26,7 +26,7 @@ INSTALL_LOG_FILE = Path(__file__).parent / "installer.log"
 
 # Create logger instance
 logger = logging.getLogger('anomrecorder.installer')
-if not logger.handlers:  # Only configure if not already configured
+if not logger.hasHandlers():  # Check if handlers already exist (more reliable)
     logger.setLevel(logging.INFO)
     
     # File handler

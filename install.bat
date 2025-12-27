@@ -80,8 +80,8 @@ echo [3/5] Running PowerShell installer...
 echo      This may take several minutes...
 echo.
 
-REM Try to run PowerShell script with execution policy bypass
-REM Capture output for better debugging
+REM Run PowerShell script with execution policy bypass
+REM Output is shown directly to help with debugging
 %PS_COMMAND% -NoProfile -ExecutionPolicy Bypass -File "%PS_SCRIPT%" 2>&1
 if %ERRORLEVEL% EQU 0 (
     echo.
