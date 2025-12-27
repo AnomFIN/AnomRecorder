@@ -81,7 +81,8 @@ echo      This may take several minutes...
 echo.
 
 REM Try to run PowerShell script with execution policy bypass
-%PS_COMMAND% -NoProfile -ExecutionPolicy Bypass -File "%PS_SCRIPT%" >nul 2>&1
+REM Capture output for better debugging
+%PS_COMMAND% -NoProfile -ExecutionPolicy Bypass -File "%PS_SCRIPT%" 2>&1
 if %ERRORLEVEL% EQU 0 (
     echo.
     echo ============================================================================
@@ -91,9 +92,11 @@ if %ERRORLEVEL% EQU 0 (
 )
 
 REM If PowerShell failed, try Python fallback
-echo      PowerShell installer encountered an issue
+echo.
+echo      PowerShell installer encountered an issue (exit code: %ERRORLEVEL%)
+echo      Check installer.log for details
 echo      Falling back to Python installer...
-echo [%DATE% %TIME%] PowerShell installer failed, falling back to Python >> "%LOG_FILE%" 2>nul
+echo [%DATE% %TIME%] PowerShell installer failed with code %ERRORLEVEL%, falling back to Python >> "%LOG_FILE%" 2>nul
 
 :PYTHON_FALLBACK
 REM Check if Python is available

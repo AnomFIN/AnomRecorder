@@ -140,11 +140,19 @@ def test_documentation():
     
     print(f"✓ Documentation contains all required sections")
     
-    # Check documentation length (should be comprehensive)
-    if len(content) < 5000:
-        print("⚠ Documentation seems short, may not be comprehensive")
+    # Check documentation quality by verifying key content is present
+    quality_checks = {
+        'installation_methods': 'Method 1:' in content and 'Method 2:' in content,
+        'troubleshooting': 'Troubleshooting' in content,
+        'examples': '```' in content,  # Code examples present
+        'comprehensive': len(content) > 3000  # Reasonable minimum length
+    }
+    
+    quality_issues = [k for k, v in quality_checks.items() if not v]
+    if quality_issues:
+        print(f"⚠ Documentation quality concerns: {', '.join(quality_issues)}")
     else:
-        print(f"✓ Documentation is comprehensive ({len(content)} characters)")
+        print(f"✓ Documentation is comprehensive and well-structured ({len(content)} characters)")
     
     return True
 

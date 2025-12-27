@@ -21,17 +21,23 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
-# Setup file logging
+# Setup file logging - configure only if not already configured
 INSTALL_LOG_FILE = Path(__file__).parent / "installer.log"
-logging.basicConfig(
-    level=logging.INFO,
-    format='[%(asctime)s] [%(levelname)s] %(message)s',
-    handlers=[
-        logging.FileHandler(INSTALL_LOG_FILE, encoding='utf-8'),
-        logging.StreamHandler(sys.stdout)
-    ]
-)
-logger = logging.getLogger(__name__)
+
+# Create logger instance
+logger = logging.getLogger('anomrecorder.installer')
+if not logger.handlers:  # Only configure if not already configured
+    logger.setLevel(logging.INFO)
+    
+    # File handler
+    file_handler = logging.FileHandler(INSTALL_LOG_FILE, encoding='utf-8')
+    file_handler.setFormatter(logging.Formatter('[%(asctime)s] [%(levelname)s] %(message)s'))
+    logger.addHandler(file_handler)
+    
+    # Console handler (optional, for debugging)
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(logging.Formatter('[%(levelname)s] %(message)s'))
+    logger.addHandler(console_handler)
 
 # Try to import tkinter, fall back to CLI if not available
 try:

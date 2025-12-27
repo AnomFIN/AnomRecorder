@@ -48,19 +48,8 @@ $AppEntry = Join-Path $ScriptDir "usb_cam_viewer.py"
 $MinPythonVersion = [version]"3.8.0"
 $MaxRetries = 3
 
-# ANSI Color codes for pretty output
-$ColorReset = "`e[0m"
-$ColorGreen = "`e[32m"
-$ColorRed = "`e[31m"
-$ColorYellow = "`e[33m"
-$ColorCyan = "`e[36m"
-$ColorBold = "`e[1m"
-
-# Check if terminal supports colors
-$SupportsColor = $true
-if ($env:TERM -eq "dumb" -or $null -eq $host.UI.RawUI) {
-    $SupportsColor = $false
-}
+# Initialize alternate log notification flag
+$script:AltLogNotified = $false
 
 #region Logging Functions
 
@@ -73,43 +62,38 @@ function Write-Log {
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     $logMessage = "[$timestamp] [$Level] $Message"
     
-    # Always log to file
+    # Always log to file with better error handling
     try {
-        Add-Content -Path $LogFile -Value $logMessage -ErrorAction SilentlyContinue
+        Add-Content -Path $LogFile -Value $logMessage -ErrorAction Stop
     } catch {
-        # If logging fails, continue silently
+        # If primary log fails, try alternate log location
+        try {
+            $altLog = Join-Path $env:TEMP "anomrecorder_installer.log"
+            Add-Content -Path $altLog -Value $logMessage -ErrorAction Stop
+            # Notify user once about alternate log location
+            if (-not $script:AltLogNotified) {
+                Write-Host "Note: Using alternate log location: $altLog" -ForegroundColor Yellow
+                $script:AltLogNotified = $true
+            }
+        } catch {
+            # If both fail, continue without file logging (to not block installation)
+        }
     }
     
     # Console output based on level and silent mode
     if (-not $Silent) {
         switch ($Level) {
             "SUCCESS" {
-                if ($SupportsColor) {
-                    Write-Host "$ColorGreen✓$ColorReset $Message" -ForegroundColor Green
-                } else {
-                    Write-Host "[OK] $Message"
-                }
+                Write-Host "✓ $Message" -ForegroundColor Green
             }
             "ERROR" {
-                if ($SupportsColor) {
-                    Write-Host "$ColorRed✗$ColorReset $Message" -ForegroundColor Red
-                } else {
-                    Write-Host "[ERROR] $Message"
-                }
+                Write-Host "✗ $Message" -ForegroundColor Red
             }
             "WARNING" {
-                if ($SupportsColor) {
-                    Write-Host "$ColorYellow⚠$ColorReset $Message" -ForegroundColor Yellow
-                } else {
-                    Write-Host "[WARNING] $Message"
-                }
+                Write-Host "⚠ $Message" -ForegroundColor Yellow
             }
             "HEADER" {
-                if ($SupportsColor) {
-                    Write-Host "`n$ColorBold$ColorCyan$Message$ColorReset`n" -ForegroundColor Cyan
-                } else {
-                    Write-Host "`n=== $Message ===`n"
-                }
+                Write-Host "`n=== $Message ===`n" -ForegroundColor Cyan
             }
             default {
                 Write-Host "  $Message"
