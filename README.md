@@ -26,20 +26,38 @@ tests/             # Pytest-yksikkötestit
 
 ## Asennus ja ajaminen
 
-### Automaattinen asennus (suositeltu)
-Käytä reaktiivista asennusohjelmaa, joka asentaa kaikki riippuvuudet, testaa asennuksen ja korjaa automaattisesti virheet:
+### 🚀 Automaattinen asennus (suositeltu)
 
-> GUI käynnistää asennuksen automaattisesti heti kun järjestelmätarkistus valmistuu – erillistä "Start"-painallusta ei tarvita.
+#### Windows (Bulletproof Installer)
+AnomRecorder sisältää täysin automaattisen Windows-asennusohjelman:
 
-**Windows:**
 ```batch
-install_dependencies.bat
+install.bat
 ```
+
+Tai PowerShell:
+```powershell
+.\install.ps1
+```
+
+**Ominaisuudet:**
+- ✅ 100% automaattinen - ei manuaalisia vaiheita
+- ✅ Ei kaadu koskaan - kattava virheidenkäsittely
+- ✅ Luo ja käyttää virtuaaliympäristöä (.venv)
+- ✅ Automaattinen riippuvuuksien asennus
+- ✅ Yrityslogiikka ohimeneviin virheisiin
+- ✅ Ammattimaiset virheviestit (ei raakoja stack traceja)
+- ✅ Kattava lokitus tiedostoon (installer.log)
+- ✅ Valinnainen automaattinen käynnistys
+
+📖 **Katso yksityiskohtaiset ohjeet:** [WINDOWS_INSTALLER.md](WINDOWS_INSTALLER.md)
 
 **Linux/Mac/CLI:**
 ```bash
 python install.py
 ```
+
+> GUI käynnistää asennuksen automaattisesti heti kun järjestelmätarkistus valmistuu – erillistä "Start"-painallusta ei tarvita.
 
 Asennusohjelma:
 - ✓ Tarkistaa Python-version
