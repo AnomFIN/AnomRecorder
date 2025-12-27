@@ -49,3 +49,4 @@ application.log
 
 # Downloaded packages
 *.whl
+test_installer_validation.log
