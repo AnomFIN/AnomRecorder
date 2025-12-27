@@ -4,7 +4,7 @@ setlocal ENABLEDELAYEDEXPANSION
 REM Build standalone Windows .exe for USB Camera Viewer
 REM Requirements: Python 3.9+ installed (py launcher)
 
-cd /d %~dp0\..
+cd /d %~dp0
 
 if not exist .venv (
   echo Creating virtual environment...
