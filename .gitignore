@@ -6,6 +6,7 @@ __pycache__/
 .Python
 env/
 venv/
+.venv/
 ENV/
 build/
 develop-eggs/
@@ -43,6 +44,9 @@ Thumbs.db
 
 # Logs
 *.log
+installer.log
+application.log
 
 # Downloaded packages
 *.whl
+test_installer_validation.log

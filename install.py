@@ -17,7 +17,27 @@ import sys
 import threading
 import os
 import shutil
+import logging
+from datetime import datetime
 from pathlib import Path
+
+# Setup file logging - configure only if not already configured
+INSTALL_LOG_FILE = Path(__file__).parent / "installer.log"
+
+# Create logger instance
+logger = logging.getLogger('anomrecorder.installer')
+if not logger.hasHandlers():  # Check if handlers already exist (more reliable)
+    logger.setLevel(logging.INFO)
+    
+    # File handler
+    file_handler = logging.FileHandler(INSTALL_LOG_FILE, encoding='utf-8')
+    file_handler.setFormatter(logging.Formatter('[%(asctime)s] [%(levelname)s] %(message)s'))
+    logger.addHandler(file_handler)
+    
+    # Console handler (optional, for debugging)
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(logging.Formatter('[%(levelname)s] %(message)s'))
+    logger.addHandler(console_handler)
 
 # Try to import tkinter, fall back to CLI if not available
 try:
@@ -35,6 +55,16 @@ elif "--no-venv" in sys.argv:
     DEFAULT_USE_VENV = False
 else:
     DEFAULT_USE_VENV = True
+
+# Log startup
+logger.info("=" * 60)
+logger.info("AnomRecorder Installation Script Starting")
+logger.info(f"Python Version: {sys.version}")
+logger.info(f"Platform: {sys.platform}")
+logger.info(f"Working Directory: {Path.cwd()}")
+logger.info(f"Script Directory: {Path(__file__).parent}")
+logger.info(f"Log File: {INSTALL_LOG_FILE}")
+logger.info("=" * 60)
 
 class InstallerGUI:
     def __init__(self, root, auto_start=False, use_venv=DEFAULT_USE_VENV):
@@ -288,6 +318,8 @@ class InstallerGUI:
         self.log_text.insert(tk.END, message + "\n")
         self.log_text.see(tk.END)
         self.root.update()
+        # Also log to file
+        logger.info(message)
 
     def install_linux_python(self):
         """Install Python 3.12/3.11 via the system package manager and relaunch the installer."""
@@ -794,6 +826,8 @@ class InstallerCLI:
     def log(self, message):
         """Print log message"""
         print(message)
+        # Also log to file
+        logger.info(message)
     
     def check_system(self):
         """Check system requirements"""
