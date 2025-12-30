@@ -15,18 +15,8 @@
     "pan_right": "Right"
   },
   "autoreconnect": true,
-  "ip_cameras": [
-    {
-      "name": "Camera at 192.168.1.108:554",
-      "url": "rtsp://<USERNAME>:<PASSWORD>@192.168.1.108:554/cam/realmonitor?channel=1&subtype=0",
-      "protocol": "rtsp",
-      "ip": "192.168.1.108",
-      "port": 554,
-      "username": "<USERNAME>",
-      "password": "<PASSWORD>"
-    }
-  ],
+  "ip_cameras": [],
   "audio_enabled": false,
-  "audio_device": "Intel 82801AA-ICH: - (hw:0,0)",
+  "audio_device": "",
   "event_notes": {}
 }
