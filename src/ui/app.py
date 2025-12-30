@@ -89,7 +89,7 @@ class CameraApp:
 
         self.num_cams = tk.IntVar(value=1)
         self.enable_motion = tk.BooleanVar(value=True)
-        self.enable_person = tk.BooleanVar(value=True)
+        self.enable_person = tk.BooleanVar(value=False)
 
         self.zoom_states = [ZoomState(min_factor=0.5), ZoomState(min_factor=0.5)]
         self.zoom_labels = [tk.StringVar(value="1.0x"), tk.StringVar(value="1.0x")]
@@ -551,8 +551,8 @@ class CameraApp:
             else:
                 # USB camera
                 cap = cv2.VideoCapture(source, cv2.CAP_DSHOW)
-                cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, 480)
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 360)
                 self.camera_sources[slot] = source
                 self.indices[slot] = source
                 
@@ -1788,8 +1788,8 @@ class CameraApp:
         
         try:
             cap = cv2.VideoCapture(saved_index, cv2.CAP_DSHOW)
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 480)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 360)
             
             if cap.isOpened():
                 # Test read

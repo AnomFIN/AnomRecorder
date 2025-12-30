@@ -1,9 +1,9 @@
 {
     "camera_indices": [0],
-    "resolution": [640, 480],
+    "resolution": [480, 360],
     "fps": 30,
     "motion_detection": true,
-    "person_detection": true,
+    "person_detection": false,
     "motion_threshold": 25,
     "motion_min_area": 500,
     "recording_duration": 10,
