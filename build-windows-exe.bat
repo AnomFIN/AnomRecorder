@@ -47,8 +47,16 @@ if exist models (
 )
 
 REM Prepare icon file
-set ICON_FILE=logo.ico
-if not exist %ICON_FILE% set ICON_FILE=app.ico
+set "ICON_FILE=logo.ico"
+if not exist "%ICON_FILE%" (
+  set "ICON_FILE=app.ico"
+)
+
+if not exist "%ICON_FILE%" (
+  echo ERROR: No icon file found. Expected "logo.ico" or "app.ico" in %cd%.
+  pause
+  exit /b 1
+)
 
 echo Building EXE...
 set VERSION_FILE=scripts\version_info.txt
