@@ -68,11 +68,14 @@ if exist %VERSION_FILE% (
     --hidden-import=PIL._tkinter_finder ^
     --hidden-import=cv2 ^
     --hidden-import=numpy ^
+    --hidden-import=numpy._core ^
+    --hidden-import=numpy._core._multiarray_umath ^
     --hidden-import=tkinter ^
     --hidden-import=sounddevice ^
     --hidden-import=watchdog ^
     --hidden-import=send2trash ^
     --collect-all sounddevice ^
+    --collect-all numpy ^
     --version-file=%VERSION_FILE%
 ) else (
   pyinstaller --clean -F -w usb_cam_viewer.py --name "Kamerajarjestelma" ^
@@ -82,11 +85,14 @@ if exist %VERSION_FILE% (
     --hidden-import=PIL._tkinter_finder ^
     --hidden-import=cv2 ^
     --hidden-import=numpy ^
+    --hidden-import=numpy._core ^
+    --hidden-import=numpy._core._multiarray_umath ^
     --hidden-import=tkinter ^
     --hidden-import=sounddevice ^
     --hidden-import=watchdog ^
     --hidden-import=send2trash ^
-    --collect-all sounddevice
+    --collect-all sounddevice ^
+    --collect-all numpy
 )
 
 if errorlevel 1 (
